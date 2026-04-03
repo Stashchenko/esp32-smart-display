@@ -1,0 +1,487 @@
+substitutions:
+  BRIGHTNESS: "100"
+  COLOR_1: "0x03A9F4"
+  COLOR_2: "0x0288D1"
+  
+esphome:
+  name: smart-display
+  friendly_name: SmartDisplay
+  on_boot:
+  - priority: 600
+    then:
+      - light.turn_on:
+          id: backlight
+          brightness: ${BRIGHTNESS}%
+      - lambda: |-
+            id(last_touch_ms) = millis();    
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+logger:
+
+api:
+
+ota:
+  - platform: esphome
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  ap:
+    ssid: "SmartDisplayHotspot"
+
+captive_portal:
+
+web_server:
+  port: 80
+
+globals:
+  - id: last_touch_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: '20'  
+  - id: screen_is_on
+    type: bool
+    restore_value: no
+    initial_value: 'true'  
+
+number:
+  - platform: template
+    name: "Screen Timeout"
+    id: screen_timeout
+    min_value: 5
+    max_value: 60
+    step: 1
+    unit_of_measurement: "s"
+    initial_value: 20
+    restore_value: true
+    optimistic: true
+
+interval:
+  - interval: 1s
+    then:
+      - lambda: |-
+          if (!id(screen_is_on)) return;  // ✅ STOP everything if already off
+
+          float timeout_sec = id(screen_timeout).state;
+
+          if (isnan(timeout_sec) || timeout_sec < 1) {
+            timeout_sec = 20;
+          }
+
+          uint32_t timeout_ms = uint32_t(timeout_sec * 1000);
+
+          if (millis() - id(last_touch_ms) > timeout_ms) {
+            ESP_LOGI("screen", "⏳ Timeout reached -> turning screen OFF");
+            id(screen_off).execute();
+          }          
+
+sensor:
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    update_interval: 60s
+    id: wifi_signal_db
+    entity_category: "diagnostic"
+    internal: true  # hide this sensor to HA,
+
+  - platform: copy
+    source_id: wifi_signal_db
+    name: "WiFi Signal Percent"
+    icon: mdi:wifi
+    filters:
+      - lambda: return min(max(2 * (x + 100.0), 0.0), 100.0);
+    unit_of_measurement: " %"
+    entity_category: "diagnostic"
+    device_class: ""
+  
+  - platform: homeassistant
+    id: media_volume
+    entity_id: media_player.kitchen
+    attribute: volume_level
+    on_value:
+      - lvgl.label.update:
+          id: volume_label
+          text: !lambda |-
+            float vol = x;
+            if (isnan(vol)) vol = 0;
+
+            int vol_percent = int(ceilf(vol * 100.0));
+            char buff[8];
+            sprintf(buff, "VOL: %d%%", vol_percent);
+            return std::string(buff);
+
+
+text_sensor:
+  - platform: homeassistant
+    id: media_title
+    entity_id: media_player.kitchen
+    attribute: media_title
+    on_value:
+      - lvgl.label.update:
+          id: media_label
+          text: !lambda |-
+            if (x.length() > 0) return x.c_str();
+            return "No media";
+
+  - platform: homeassistant
+    id: media_state
+    entity_id: media_player.kitchen
+    on_value:
+      - lvgl.label.update:
+          id: play_btn_label
+          text: !lambda |-
+            if (x == "playing") return "\U000F03E4"; // pause
+            return "\U000F040A"; // play
+light:
+  - platform: monochromatic
+    output: backlight_pwm
+    name: Display Backlight
+    id: backlight
+    restore_mode: ALWAYS_OFF
+    on_turn_on:
+      - lambda: |-
+          id(last_touch_ms) = millis();
+          id(screen_is_on) = true;          
+          ESP_LOGI("screen", "☀️ Backlight ON → reset timer");
+
+spi:
+  - id: tft
+    clk_pin: GPIO14
+    mosi_pin: GPIO13
+    miso_pin: GPIO12
+  - id: touch
+    clk_pin: GPIO25
+    mosi_pin: GPIO32
+    miso_pin: GPIO39
+
+output:
+  - platform: ledc
+    pin: GPIO21
+    id: backlight_pwm
+
+display:
+  - platform: ili9xxx
+    model: ILI9342
+    invert_colors: false
+    spi_id: tft
+    cs_pin: GPIO15
+    dc_pin: GPIO2
+    transform:
+      mirror_y: true
+    color_palette: 8BIT
+    color_order: rgb
+    auto_clear_enabled: false
+    update_interval: never
+
+touchscreen:
+  platform: xpt2046
+  spi_id: touch
+  cs_pin: GPIO33
+  interrupt_pin: GPIO36
+  update_interval: 50ms
+  threshold: 400
+  calibration:
+    x_min: 240
+    x_max: 3750
+    y_min: 290
+    y_max: 3750
+  transform:
+    swap_xy: true
+  on_touch:
+    - lambda: |-
+          if (!id(screen_is_on)) {
+            ESP_LOGI("screen", "👆 Wake screen");
+            id(screen_on).execute();
+          }
+          id(last_touch_ms) = millis(); 
+          ESP_LOGI("cal", "x=%d, y=%d, x_raw=%d, y_raw=%0d",
+              touch.x,
+              touch.y,
+              touch.x_raw,
+              touch.y_raw
+              );      
+
+font:
+  - file: "fonts/BebasNeue-Regular.ttf"
+    id: bebas_big
+    size: 36
+    bpp: 4
+
+  - file: "fonts/Roboto.ttf"
+    id: roboto
+    size: 12
+    bpp: 4
+    glyphs: " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдеёжзийклмнопрстуфхцчшщъыьэюяҐЄІЇґєії"
+    ignore_missing_glyphs: true
+  
+  - file: "fonts/materialdesignicons-webfont.ttf"
+    id: material
+    size: 42
+    bpp: 4
+    glyphs: [
+      "\U000F040A", # play
+      "\U000F03E4", # pause
+      "\U000F04AD", # next
+      "\U000F04AE", # previous
+      "\U000F075D", # volume up
+      "\U000F075E", # volume down
+      "\U000F07D0", # Home Assistant icon
+    ]
+
+time:
+  - platform: homeassistant
+    id: ha_time
+    on_time:
+      - cron: '* * * * * *'
+        then:
+          - script.execute: time_update
+
+script:
+  - id: time_update
+    then:
+      - lvgl.label.update:
+          id: local_time
+          text: !lambda |-
+            char buff[10] = "-";
+            auto time = id(ha_time).now();
+            if (time.is_valid())
+              sprintf(buff, "%02d:%02d", time.hour, time.minute);
+            return buff;  
+  - id: screen_off
+    then:
+      - lambda: |-
+          if (!id(screen_is_on)) return;  // ✅ prevent spam
+
+          id(screen_is_on) = false;
+          ESP_LOGI("screen", "🌙 Screen OFF");
+      - light.turn_off: backlight
+      - lvgl.obj.update:
+          id: touch_overlay
+          hidden: false   
+  - id: screen_on
+    then:
+      - lambda: |-
+          if (id(screen_is_on)) return;  // already on
+
+          id(screen_is_on) = true;
+          id(last_touch_ms) = millis();
+          ESP_LOGI("screen", "🌞 Screen ON");
+      - light.turn_on:
+          id: backlight
+          brightness: ${BRIGHTNESS}%         
+
+
+lvgl:
+  buffer_size: 25%
+  bg_color: 0x000000
+  scrollbar_mode: "OFF"
+  scrollable: false
+  widgets:    
+    - obj:
+        id: bgfill
+        width: 319
+        height: 239
+        align: CENTER
+        bg_color: 0x101010
+        bg_opa: 100%
+        border_width: 0
+
+    - label:
+        id: ha_logo
+        align: TOP_RIGHT
+        text: "\U000F07D0"   # Home Assistant icon
+        text_font: material
+        text_color: $COLOR_1   # official HA blue
+        translate_x: 0       # optional padding from the edge
+        translate_y: 0       # optional padding from the top
+
+    - label:
+        align: TOP_LEFT
+        id: local_time
+        text: "--:--"
+        height: 36        
+        text_font: bebas_big
+        text_color: WHITE
+        translate_x: 4
+        translate_y: 0
+    
+    - obj:
+        id: media_box
+        width: 319 
+        height: 61
+        align: CENTER
+        y: 89
+        radius: 10                
+        bg_color: 0x101010
+        border_width: 2        # make the border visible
+        border_color: $COLOR_1 # use your theme color for border
+        scrollbar_mode: "OFF"
+        scrollable: false     
+        widgets:
+
+          # Title
+          - label:
+              id: media_label
+              align: TOP_LEFT
+              y: -13
+              x: -5          
+              width: 150
+              text: "No media"
+              text_font: roboto
+              text_color: 0xFFFFFF
+              long_mode: SCROLL_CIRCULAR
+              
+
+          # Play / Pause button
+          - button:
+              id: play_btn
+              width: 70
+              height: 40
+              align: CENTER
+              radius: 15
+              y: 6
+              bg_color: $COLOR_1
+              widgets:                
+                 - label:
+                    id: play_btn_label
+                    align: CENTER
+                    text: !lambda |-
+                      if (id(media_state).state == "playing")
+                        return "\U000F03E4";  // pause
+                      return "\U000F040A";    // play
+                    text_font: material
+                    text_color: 0xFFFFFF
+              on_click:
+                - homeassistant.service:
+                    service: media_player.media_play_pause
+                    data:
+                      entity_id: media_player.kitchen
+
+          # Previous
+          - button:
+              width: 50
+              height: 40
+              x: -70    
+              y: 6
+              align: CENTER
+              # radius: 15
+              bg_color: 0xFFFFFF
+              widgets:
+                - label:
+                    align: CENTER
+                    text: "\U000F04AE"
+                    text_color: 0x101010
+                    text_font: material  
+              on_click:
+                - homeassistant.service:
+                    service: media_player.media_previous_track
+                    data:
+                      entity_id: media_player.kitchen
+
+          # Next
+          - button:
+              width: 50
+              height: 40
+              x: 70
+              y: 6
+              align: CENTER
+              # radius: 15
+              bg_color: 0xFFFFFF
+              widgets:
+                - label:
+                    align: CENTER                    
+                    text: "\U000F04AD"  # next
+                    text_font: material
+                    text_color: 0x101010
+              on_click:
+                - homeassistant.service:
+                    service: media_player.media_next_track
+                    data:
+                      entity_id: media_player.kitchen
+          # Volume Up button
+          - button:
+              width: 50
+              height: 40
+              x: 125
+              y: 6              
+              align: CENTER
+              # radius: 15
+              bg_color: 0xFFFFFF
+              widgets:
+                - label:
+                    align: CENTER
+                    text: "\U000F075D"  # volume up
+                    text_font: material
+                    text_color: 0x101010
+              on_click:
+                - homeassistant.service:
+                    service: media_player.volume_up
+                    data:
+                      entity_id: media_player.kitchen
+
+          # Volume Down button
+          - button:
+              width: 50
+              height: 40
+              x: -125
+              y: 6              
+              align: CENTER              
+              bg_color: 0xFFFFFF
+              widgets:
+                - label:
+                    align: CENTER
+                    text: "\U000F075E"  # volume down
+                    text_font: material
+                    text_color: 0x101010
+              on_click:
+                - homeassistant.service:
+                    service: media_player.volume_down
+                    data:
+                      entity_id: media_player.kitchen
+          
+          # Volume label inside media_box
+          - label:
+              id: volume_label
+              align: TOP_RIGHT
+              y: -13
+              x: 6
+              width: 55
+              text_font: roboto
+              long_mode: SCROLL_CIRCULAR
+              text_color: 0xFFFFFF              
+              text: "N/A"
+
+    - obj:
+        id: touch_overlay
+        width: 320
+        height: 240
+        align: CENTER
+
+        bg_color: 0x000000
+        bg_opa: 50%          # semi-transparent dark overlay
+
+        border_width: 0
+        hidden: true         # start hidden (screen ON)
+        clickable: true      # MUST capture touch
+        scrollable: false
+
+        widgets:
+          - label:
+              align: CENTER
+              text: "Tap to unlock"
+              text_font: roboto
+              text_color: 0xFFFFFF
+
+        on_click:
+          - light.turn_on:
+              id: backlight
+              brightness: ${BRIGHTNESS}%
+          - lambda: |-
+              id(last_touch_ms) = millis();  // reset timer on wake    
+          - lvgl.obj.update:
+              id: touch_overlay
+              hidden: true              
