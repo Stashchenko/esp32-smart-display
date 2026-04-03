@@ -2,17 +2,18 @@ substitutions:
   BRIGHTNESS: "100"
   COLOR_1: "0x03A9F4"
   COLOR_2: "0x0288D1"
-  
+  MEDIA_PLAYER: "media_player.kitchen"
+
 esphome:
   name: smart-display
   friendly_name: SmartDisplay
   on_boot:
-  - priority: 600
-    then:
-      - light.turn_on:
-          id: backlight
-          brightness: ${BRIGHTNESS}%
-      - lambda: |-
+    - priority: 600
+      then:
+        - light.turn_on:
+            id: backlight
+            brightness: ${BRIGHTNESS}%
+        - lambda: |-
             id(last_touch_ms) = millis();    
 
 esp32:
@@ -43,11 +44,11 @@ globals:
   - id: last_touch_ms
     type: uint32_t
     restore_value: no
-    initial_value: '20'  
+    initial_value: '20'
   - id: screen_is_on
     type: bool
     restore_value: no
-    initial_value: 'true'  
+    initial_value: 'true'
 
 number:
   - platform: template
@@ -60,6 +61,30 @@ number:
     initial_value: 20
     restore_value: true
     optimistic: true
+
+text:
+  - platform: template
+    name: "Notification"
+    id: notification_input
+    optimistic: true
+    mode: text
+    on_value:
+      then:
+        - if:
+            condition:
+              lambda: 'return x.length() > 0;'
+            then:
+              - logger.log:
+                  format: "📩 %s"
+                  args: [ 'x.c_str()' ]
+
+              - script.execute: screen_on
+              - lvgl.label.update:
+                  id: notification_label
+                  text: !lambda 'return x;'
+              - lvgl.obj.update:
+                  id: notification_popup
+                  hidden: false
 
 interval:
   - interval: 1s
@@ -97,10 +122,10 @@ sensor:
     unit_of_measurement: " %"
     entity_category: "diagnostic"
     device_class: ""
-  
+
   - platform: homeassistant
     id: media_volume
-    entity_id: media_player.kitchen
+    entity_id: $MEDIA_PLAYER
     attribute: volume_level
     on_value:
       - lvgl.label.update:
@@ -114,11 +139,10 @@ sensor:
             sprintf(buff, "VOL: %d%%", vol_percent);
             return std::string(buff);
 
-
 text_sensor:
   - platform: homeassistant
     id: media_title
-    entity_id: media_player.kitchen
+    entity_id: $MEDIA_PLAYER
     attribute: media_title
     on_value:
       - lvgl.label.update:
@@ -129,13 +153,14 @@ text_sensor:
 
   - platform: homeassistant
     id: media_state
-    entity_id: media_player.kitchen
+    entity_id: $MEDIA_PLAYER
     on_value:
       - lvgl.label.update:
           id: play_btn_label
           text: !lambda |-
             if (x == "playing") return "\U000F03E4"; // pause
             return "\U000F040A"; // play
+
 light:
   - platform: monochromatic
     output: backlight_pwm
@@ -193,17 +218,17 @@ touchscreen:
     swap_xy: true
   on_touch:
     - lambda: |-
-          if (!id(screen_is_on)) {
-            ESP_LOGI("screen", "👆 Wake screen");
-            id(screen_on).execute();
-          }
-          id(last_touch_ms) = millis(); 
-          ESP_LOGI("cal", "x=%d, y=%d, x_raw=%d, y_raw=%0d",
-              touch.x,
-              touch.y,
-              touch.x_raw,
-              touch.y_raw
-              );      
+        if (!id(screen_is_on)) {
+          ESP_LOGI("screen", "👆 Wake screen");
+          id(screen_on).execute();
+        }
+        id(last_touch_ms) = millis(); 
+        ESP_LOGI("cal", "x=%d, y=%d, x_raw=%d, y_raw=%0d",
+            touch.x,
+            touch.y,
+            touch.x_raw,
+            touch.y_raw
+            );      
 
 font:
   - file: "fonts/BebasNeue-Regular.ttf"
@@ -217,7 +242,14 @@ font:
     bpp: 4
     glyphs: " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдеёжзийклмнопрстуфхцчшщъыьэюяҐЄІЇґєії"
     ignore_missing_glyphs: true
-  
+
+  - file: "fonts/Roboto.ttf"
+    id: roboto_big
+    size: 20
+    bpp: 4
+    glyphs: " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдеёжзийклмнопрстуфхцчшщъыьэюяҐЄІЇґєії"
+    ignore_missing_glyphs: true
+
   - file: "fonts/materialdesignicons-webfont.ttf"
     id: material
     size: 42
@@ -250,7 +282,7 @@ script:
             auto time = id(ha_time).now();
             if (time.is_valid())
               sprintf(buff, "%02d:%02d", time.hour, time.minute);
-            return buff;  
+            return buff;
   - id: screen_off
     then:
       - lambda: |-
@@ -261,7 +293,10 @@ script:
       - light.turn_off: backlight
       - lvgl.obj.update:
           id: touch_overlay
-          hidden: false   
+          hidden: false
+      - lvgl.obj.update:
+          id: notification_popup
+          clickable: false   # when screen off
   - id: screen_on
     then:
       - lambda: |-
@@ -272,7 +307,12 @@ script:
           ESP_LOGI("screen", "🌞 Screen ON");
       - light.turn_on:
           id: backlight
-          brightness: ${BRIGHTNESS}%         
+          brightness: ${BRIGHTNESS}%
+      - delay: 200ms
+      - lvgl.obj.update:
+          id: notification_popup
+          clickable: true    # when screen on
+
 
 
 lvgl:
@@ -280,7 +320,7 @@ lvgl:
   bg_color: 0x000000
   scrollbar_mode: "OFF"
   scrollable: false
-  widgets:    
+  widgets:
     - obj:
         id: bgfill
         width: 319
@@ -303,24 +343,24 @@ lvgl:
         align: TOP_LEFT
         id: local_time
         text: "--:--"
-        height: 36        
+        height: 36
         text_font: bebas_big
         text_color: WHITE
         translate_x: 4
         translate_y: 0
-    
+
     - obj:
         id: media_box
-        width: 319 
+        width: 319
         height: 61
         align: CENTER
         y: 89
-        radius: 10                
+        radius: 10
         bg_color: 0x101010
         border_width: 2        # make the border visible
         border_color: $COLOR_1 # use your theme color for border
         scrollbar_mode: "OFF"
-        scrollable: false     
+        scrollable: false
         widgets:
 
           # Title
@@ -328,13 +368,13 @@ lvgl:
               id: media_label
               align: TOP_LEFT
               y: -13
-              x: -5          
+              x: -5
               width: 150
               text: "No media"
               text_font: roboto
               text_color: 0xFFFFFF
               long_mode: SCROLL_CIRCULAR
-              
+
 
           # Play / Pause button
           - button:
@@ -345,8 +385,8 @@ lvgl:
               radius: 15
               y: 6
               bg_color: $COLOR_1
-              widgets:                
-                 - label:
+              widgets:
+                - label:
                     id: play_btn_label
                     align: CENTER
                     text: !lambda |-
@@ -359,13 +399,13 @@ lvgl:
                 - homeassistant.service:
                     service: media_player.media_play_pause
                     data:
-                      entity_id: media_player.kitchen
+                      entity_id: $MEDIA_PLAYER
 
           # Previous
           - button:
               width: 50
               height: 40
-              x: -70    
+              x: -70
               y: 6
               align: CENTER
               # radius: 15
@@ -375,12 +415,12 @@ lvgl:
                     align: CENTER
                     text: "\U000F04AE"
                     text_color: 0x101010
-                    text_font: material  
+                    text_font: material
               on_click:
                 - homeassistant.service:
                     service: media_player.media_previous_track
                     data:
-                      entity_id: media_player.kitchen
+                      entity_id: $MEDIA_PLAYER
 
           # Next
           - button:
@@ -393,7 +433,7 @@ lvgl:
               bg_color: 0xFFFFFF
               widgets:
                 - label:
-                    align: CENTER                    
+                    align: CENTER
                     text: "\U000F04AD"  # next
                     text_font: material
                     text_color: 0x101010
@@ -401,13 +441,13 @@ lvgl:
                 - homeassistant.service:
                     service: media_player.media_next_track
                     data:
-                      entity_id: media_player.kitchen
+                      entity_id: $MEDIA_PLAYER
           # Volume Up button
           - button:
               width: 50
               height: 40
               x: 125
-              y: 6              
+              y: 6
               align: CENTER
               # radius: 15
               bg_color: 0xFFFFFF
@@ -421,15 +461,15 @@ lvgl:
                 - homeassistant.service:
                     service: media_player.volume_up
                     data:
-                      entity_id: media_player.kitchen
+                      entity_id: $MEDIA_PLAYER
 
           # Volume Down button
           - button:
               width: 50
               height: 40
               x: -125
-              y: 6              
-              align: CENTER              
+              y: 6
+              align: CENTER
               bg_color: 0xFFFFFF
               widgets:
                 - label:
@@ -441,8 +481,8 @@ lvgl:
                 - homeassistant.service:
                     service: media_player.volume_down
                     data:
-                      entity_id: media_player.kitchen
-          
+                      entity_id: $MEDIA_PLAYER
+
           # Volume label inside media_box
           - label:
               id: volume_label
@@ -452,7 +492,7 @@ lvgl:
               width: 55
               text_font: roboto
               long_mode: SCROLL_CIRCULAR
-              text_color: 0xFFFFFF              
+              text_color: 0xFFFFFF
               text: "N/A"
 
     - obj:
@@ -462,26 +502,61 @@ lvgl:
         align: CENTER
 
         bg_color: 0x000000
-        bg_opa: 50%          # semi-transparent dark overlay
+        bg_opa: 100%          # 100% dark overlay
 
         border_width: 0
         hidden: true         # start hidden (screen ON)
-        clickable: true      # MUST capture touch
+        clickable: false      # MUST capture touch
         scrollable: false
 
         widgets:
           - label:
               align: CENTER
-              text: "Tap to unlock"
+              text: "TAP TO UNLOCK"
               text_font: roboto
-              text_color: 0xFFFFFF
-
+              text_color: 0x212121
         on_click:
           - light.turn_on:
               id: backlight
               brightness: ${BRIGHTNESS}%
           - lambda: |-
-              id(last_touch_ms) = millis();  // reset timer on wake    
+              id(last_touch_ms) = millis();  // reset timer on wake
           - lvgl.obj.update:
               id: touch_overlay
-              hidden: true              
+              hidden: true
+
+    - obj:
+        id: notification_popup
+        width: 280
+        height: 100
+        align: TOP_LEFT
+        translate_x: 20          # move right to center horizontally
+        translate_y: 3           # distance from top
+        radius: 10
+        hidden: true
+        clickable: true
+        scrollable: false
+
+        # Gradient background
+        bg_color: $COLOR_1        # starting color (top)
+        bg_grad_color: $COLOR_2   # ending color (bottom)
+        bg_grad_dir: VER   # vertical gradient
+        border_color: $COLOR_2
+        border_width: 2
+
+
+        widgets:
+          - label:
+              id: notification_label
+              align: CENTER
+              width: 260
+              text: ""
+              text_font: roboto_big
+              text_color: 0xFFFFFF
+              long_mode: WRAP
+        on_click:
+          - logger.log: "✅ Notification dismissed"
+          - lvgl.obj.update:
+              id: notification_popup
+              hidden: true
+              clickable: false   # 🔒 disable further clicks
