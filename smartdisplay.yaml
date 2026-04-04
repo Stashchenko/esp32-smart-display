@@ -3,6 +3,10 @@ substitutions:
   COLOR_1: "0x03A9F4"
   COLOR_2: "0x0288D1"
   MEDIA_PLAYER: "media_player.kitchen"
+  GLYPHS: " !\"#$%&'()*+,-./0123456789:;<=>°?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдеёжзийклмнопрстуфхцчшщъыьэюяҐЄІЇґєії"
+  icon_xy: '80x80'
+  WEATHER: "weather.forecast_home"
+  AIR_QUALITY: "sensor.air_quality_index_krakow_air_quality_index"
 
 esphome:
   name: smart-display
@@ -78,6 +82,7 @@ text:
                   format: "📩 %s"
                   args: [ 'x.c_str()' ]
 
+              - script.execute: notification_sound
               - script.execute: screen_on
               - lvgl.label.update:
                   id: notification_label
@@ -85,6 +90,91 @@ text:
               - lvgl.obj.update:
                   id: notification_popup
                   hidden: false
+
+image:
+  - file: "images/0-default.png"
+    id: initial
+    type: RGB565
+    transparency: alpha_channel
+    resize: ${icon_xy}
+  - file: "images/1-clear-night.png"
+    id: clearnight
+    type: RGB565
+    transparency: alpha_channel
+    resize: ${icon_xy}
+  - file: "images/2-cloudy.png"
+    id: cloudy
+    type: RGB565
+    transparency: alpha_channel
+    resize: ${icon_xy}
+  - file: "images/3-fog.png"
+    id: fog
+    type: RGB565
+    transparency: alpha_channel
+    resize: ${icon_xy}
+  - file: "images/4-hail.png"
+    id: hail
+    type: RGB565
+    transparency: alpha_channel
+    resize: ${icon_xy}
+  - file: "images/5-lightning.png"
+    id: lightning
+    type: RGB565
+    transparency: alpha_channel
+    resize: ${icon_xy}
+  - file: "images/6-lightning-rainy.png"
+    id: lightningrainy
+    type: RGB565
+    transparency: alpha_channel
+    resize: ${icon_xy}
+  - file: "images/7-partlycloudy.png"
+    id: partlycloudy
+    type: RGB565
+    transparency: alpha_channel
+    resize: ${icon_xy}
+  - file: "images/8-pouring.png"
+    id: pouring
+    type: RGB565
+    transparency: alpha_channel
+    resize: ${icon_xy}
+  - file: "images/9-rainy.png"
+    id: rainy
+    type: RGB565
+    transparency: alpha_channel
+    resize: ${icon_xy}
+  - file: "images/10-snowy.png"
+    id: snowy
+    type: RGB565
+    transparency: alpha_channel
+    resize: ${icon_xy}
+  - file: "images/11-snowy-rainy.png"
+    id: snowyrainy
+    type: RGB565
+    transparency: alpha_channel
+    resize: ${icon_xy}
+  - file: "images/12-sunny.png"
+    id: sunny
+    type: RGB565
+    transparency: alpha_channel
+    resize: ${icon_xy}
+  - file: "images/13-windy.png"
+    id: windy
+    type: RGB565
+    transparency: alpha_channel
+    resize: ${icon_xy}
+  - file: "images/14-windy-variant.png"
+    id: windyvariant
+    type: RGB565
+    transparency: alpha_channel
+    resize: ${icon_xy}
+  - file: "images/15-exceptional.png"
+    id: exceptional
+    type: RGB565
+    transparency: alpha_channel
+    resize: ${icon_xy}
+  - file: "images/bgrnd_forest.png"
+    id: bgrnd_forest
+    type: RGB565
 
 interval:
   - interval: 1s
@@ -139,6 +229,52 @@ sensor:
             sprintf(buff, "VOL: %d%%", vol_percent);
             return std::string(buff);
 
+  - platform: homeassistant
+    id: weather_temperature
+    entity_id: $WEATHER
+    attribute: temperature
+    on_value:
+      - lvgl.label.update:
+          id: weather_temp_label
+          text: !lambda |-
+            char buff[10];
+            sprintf(buff, "%.1f°C", x);;            
+            return std::string(buff);    
+
+  - platform: homeassistant
+    id: air_quality_index
+    entity_id: $AIR_QUALITY
+    on_value:
+      - lambda: |-
+          ESP_LOGI("aqi", "AQI value: %.0f", x);
+      - lvgl.label.update:
+          id: aqi_label
+          text: !lambda |-
+            char buff[10];
+            sprintf(buff, "AQ: %.0f", x);
+            return std::string(buff);
+          text_color: !lambda |-
+            if (x <= 50) return lv_color_hex(0x00E400);      // good (green)
+            if (x <= 100) return lv_color_hex(0xFFFF00);     // moderate (yellow)
+            if (x <= 150) return lv_color_hex(0xFF7E00);     // unhealthy for sensitive
+            if (x <= 200) return lv_color_hex(0xFF0000);     // unhealthy
+            if (x <= 300) return lv_color_hex(0x99004C);     // very unhealthy
+            return lv_color_hex(0x7E0023);                   // hazardous  
+
+  - platform: homeassistant
+    id: weather_wind_speed
+    entity_id: $WEATHER
+    attribute: wind_speed
+    on_value:
+      - lambda: |-
+          ESP_LOGI("weather", "Wind speed: %.1f", x);
+      - lvgl.label.update:
+          id: wind_label
+          text: !lambda |-
+            char buff[16];
+            sprintf(buff, "%.0f km/h", x);
+            return std::string(buff);
+
 text_sensor:
   - platform: homeassistant
     id: media_title
@@ -160,6 +296,52 @@ text_sensor:
           text: !lambda |-
             if (x == "playing") return "\U000F03E4"; // pause
             return "\U000F040A"; // play
+
+  - platform: homeassistant
+    id: weather_condition
+    entity_id: $WEATHER
+    on_value:
+      - lvgl.image.update:
+          id: weather_icon_img
+          src: !lambda |-
+            // Convert x (state) to image ID
+            std::string s = x;        
+            
+            if (s == "clearnight") return id(clearnight);
+            if (s == "cloudy") return id(cloudy);
+            if (s == "fog") return id(fog);
+            if (s == "hail") return id(hail);
+            if (s == "lightning") return id(lightning);
+            if (s == "lightning-rainy") return id(lightningrainy);
+            if (s == "partlycloudy") return id(partlycloudy);
+            if (s == "pouring") return id(pouring);
+            if (s == "rainy") return id(rainy);
+            if (s == "snowy") return id(snowy);
+            if (s == "snowy-rainy") return id(snowyrainy);
+            if (s == "sunny") return id(sunny);
+            if (s == "windy") return id(windy);
+            if (s == "windy-variant") return id(windyvariant);
+            if (s == "exceptional") return id(exceptional);
+            
+            return id(initial);
+
+select:
+  - platform: template
+    name: "Melody"
+    id: notify_melody
+    optimistic: true
+    options:
+      - nokia_pop
+      - scale_up
+      - two_short
+      - siren
+      - star_wars
+      - mission_imp
+      - mario
+    initial_option: nokia_pop
+    on_value:
+      then:
+        - script.execute: notification_sound
 
 light:
   - platform: monochromatic
@@ -183,11 +365,6 @@ spi:
     mosi_pin: GPIO32
     miso_pin: GPIO39
 
-output:
-  - platform: ledc
-    pin: GPIO21
-    id: backlight_pwm
-
 display:
   - platform: ili9xxx
     model: ILI9342
@@ -198,7 +375,7 @@ display:
     transform:
       mirror_y: true
     color_palette: 8BIT
-    color_order: rgb
+    color_order: RGB
     auto_clear_enabled: false
     update_interval: never
 
@@ -240,14 +417,21 @@ font:
     id: roboto
     size: 12
     bpp: 4
-    glyphs: " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдеёжзийклмнопрстуфхцчшщъыьэюяҐЄІЇґєії"
+    glyphs: $GLYPHS
     ignore_missing_glyphs: true
 
   - file: "fonts/Roboto.ttf"
     id: roboto_big
     size: 20
     bpp: 4
-    glyphs: " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдеёжзийклмнопрстуфхцчшщъыьэюяҐЄІЇґєії"
+    glyphs: $GLYPHS
+    ignore_missing_glyphs: true
+
+  - file: "fonts/Roboto.ttf"
+    id: roboto_big_24
+    size: 26
+    bpp: 4
+    glyphs: $GLYPHS
     ignore_missing_glyphs: true
 
   - file: "fonts/materialdesignicons-webfont.ttf"
@@ -262,6 +446,7 @@ font:
       "\U000F075D", # volume up
       "\U000F075E", # volume down
       "\U000F07D0", # Home Assistant icon
+      "\U000F059D"  # Wind icon
     ]
 
 time:
@@ -286,7 +471,7 @@ script:
   - id: screen_off
     then:
       - lambda: |-
-          if (!id(screen_is_on)) return;  // ✅ prevent spam
+          if (!id(screen_is_on)) return;
 
           id(screen_is_on) = false;
           ESP_LOGI("screen", "🌙 Screen OFF");
@@ -313,7 +498,37 @@ script:
           id: notification_popup
           clickable: true    # when screen on
 
+  - id: notification_sound
+    then:
+      - rtttl.play: !lambda |-
+          std::string melody = id(notify_melody).current_option();
+          
+          if (melody == "nokia_pop")
+            return "nokia_pop:d=8,o=5,b=370: c5, e5, g5, p, c5, e5, g5";
+          else if (melody == "scale_up")
+            return "scale_up:d=32,o=5,b=100:c,c#,d#,e,f#,g#,a#,b";
+          else if (melody == "two_short")
+            return "two_short:d=4,o=5,b=100:16e6,16e6";
+          else if (melody == "siren")          
+            return "siren:d=8,o=5,b=100:d,e,d,e,d,e,d,e";
+          else if (melody == "star_wars")
+            return "star_wars:d=16,o=5,b=100:4e,4e,4e,8c,p,g,4e,8c,p,g,4e,4p,4b,4b,4b,8c6,p,g,4d#,8c,p,g,4e,8p";
+          else if (melody == "mission_imp")
+            return "mission_imp:d=16,o=6,b=95:32d,32d#,32d,32d#,32d,32d#,32d,32d#,32d,32d,32d#,32e,32f,32f#,32g,g,8p,g,8p,a#,p,c7,p,g,8p,g,8p,f,p,f#,p,g,8p,g,8p,a#,p,c7,p,g,8p,g,8p,f,p,f#,p,a#,g,2d,32p,a#,g,2c#,32p,a#,g,2c,a#5,8c,2p,32p,a#5,g5,2f#,32p,a#5,g5,2f,32p,a#5,g5,2e,d#,8d";
+          else if (melody == "mario")
+            return "mario:d=4,o=5,b=100:16e6,16e6,32p,8e6,16c6,8e6,8g6,8p,8g,8p,8c6,16p,8g,16p,8e,16p,8a,8b,16a#,8a,16g.,16e6,16g6,8a6,16f6,8g6,8e6,16c6,16d6,8b,16p,8c6,16p,8g,16p,8e,16p,8a,8b,16a#,8a,16g.,16e6,16g6,8a6,16f6,8g6,8e6,16c6,16d6,8b,8p,16g6,16f#6,16f6,16d#6,16p,16e6,16p,16g#,16a,16c6,16p,16a,16c6,16d6,8p,16g6,16f#6,16f6,16d#6,16p,16e6,16p,16c7,16p,16c7,16c7,p,16g6,16f#6,16f6,16d#6,16p,16e6,16p,16g#,16a,16c6,16p,16a,16c6,16d6,8p,16d#6,8p,16d6,8p,16c6";
+          
+          return "nokia_pop:d=8,o=5,b=370: c5, e5, g5, p, c5, e5, g5";
+output:
+  - platform: ledc
+    pin: GPIO26
+    id: rtttl_out
+  - platform: ledc
+    pin: GPIO21
+    id: backlight_pwm
 
+rtttl:
+  output: rtttl_out
 
 lvgl:
   buffer_size: 25%
@@ -323,16 +538,22 @@ lvgl:
   widgets:
     - obj:
         id: bgfill
-        width: 319
-        height: 239
-        align: CENTER
-        bg_color: 0x101010
+        width: 320
+        height: 240
+        align: TOP_LEFT
         bg_opa: 100%
         border_width: 0
+        scrollable: false
+        scrollbar_mode: "OFF"
+        widgets:
+          - image:
+              id: bgrnd_forest_img
+              src: bgrnd_forest
+              align: CENTER
 
     - label:
         id: ha_logo
-        align: TOP_RIGHT
+        align: TOP_LEFT
         text: "\U000F07D0"   # Home Assistant icon
         text_font: material
         text_color: $COLOR_1   # official HA blue
@@ -343,22 +564,64 @@ lvgl:
         align: TOP_LEFT
         id: local_time
         text: "--:--"
-        height: 36
         text_font: bebas_big
-        text_color: WHITE
-        translate_x: 4
-        translate_y: 0
+        text_color: 0x000000
+        translate_x: 43
+        translate_y: 3
+
+    - obj:
+        id: weather_box
+        width: 100
+        height: 180
+        align: TOP_RIGHT
+        bg_color: 0x101010
+        bg_opa: 69%
+        border_width: 1
+        radius: 5
+        border_color: 0x101010
+        scrollable: false
+        scrollbar_mode: "OFF"
+        widgets:
+          - image:
+              id: weather_icon_img
+              src: initial
+              y: -11
+              x: -4
+              align: TOP_LEFT
+
+          - label:
+              id: weather_temp_label
+              align: CENTER
+              y: 9
+              text_font: roboto_big_24
+              text_color: 0xFFFFFF
+              text: "--°C"
+          - label:
+              id: wind_label
+              align: CENTER
+              y: 39
+              text_font: roboto_big_24
+              text_color: 0x0288D1
+              text: "-- km/h"
+          - label:
+              id: aqi_label
+              align: CENTER
+              y: 67
+              text_font: roboto_big_24
+              text_color: 0xFFFFFF
+              text: "AQ: --"
 
     - obj:
         id: media_box
-        width: 319
+        width: 320
         height: 61
         align: CENTER
         y: 89
-        radius: 10
         bg_color: 0x101010
-        border_width: 2        # make the border visible
-        border_color: $COLOR_1 # use your theme color for border
+        bg_opa: 69%
+        border_width: 1
+        radius: 5
+        border_color: 0x101010
         scrollbar_mode: "OFF"
         scrollable: false
         widgets:
@@ -369,7 +632,7 @@ lvgl:
               align: TOP_LEFT
               y: -13
               x: -5
-              width: 150
+              width: 200
               text: "No media"
               text_font: roboto
               text_color: 0xFFFFFF
@@ -505,6 +768,7 @@ lvgl:
         bg_opa: 100%          # 100% dark overlay
 
         border_width: 0
+        radius: 0
         hidden: true         # start hidden (screen ON)
         clickable: false      # MUST capture touch
         scrollable: false
@@ -556,7 +820,8 @@ lvgl:
               long_mode: WRAP
         on_click:
           - logger.log: "✅ Notification dismissed"
+          - rtttl.stop
           - lvgl.obj.update:
               id: notification_popup
               hidden: true
-              clickable: false   # 🔒 disable further clicks
+              clickable: false
