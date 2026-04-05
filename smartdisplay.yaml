@@ -4,7 +4,7 @@ substitutions:
   COLOR_2: "0x0288D1"
   MEDIA_PLAYER: "media_player.kitchen"
   GLYPHS: " !\"#$%&'()*+,-./0123456789:;<=>°?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдеёжзийклмнопрстуфхцчшщъыьэюяҐЄІЇґєії"
-  icon_xy: '80x80'
+  icon_xy: '65x65'
   WEATHER: "weather.forecast_home"
   AIR_QUALITY: "sensor.air_quality_index_krakow_air_quality_index"
 
@@ -38,6 +38,12 @@ wifi:
 
   ap:
     ssid: "SmartDisplayHotspot"
+  on_connect:
+    - lambda: |-
+        id(ha_connected) = true;
+  on_disconnect:
+    - lambda: |-
+        id(ha_connected) = false;
 
 captive_portal:
 
@@ -52,6 +58,13 @@ globals:
   - id: screen_is_on
     type: bool
     restore_value: no
+    initial_value: 'true'
+  - id: ha_connected
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: ha_logo_visible
+    type: bool
     initial_value: 'true'
 
 number:
@@ -72,6 +85,7 @@ text:
     id: notification_input
     optimistic: true
     mode: text
+    initial_value: ""
     on_value:
       then:
         - if:
@@ -179,6 +193,26 @@ image:
 interval:
   - interval: 1s
     then:
+      # check ha connection
+      - if:
+          condition:
+            lambda: 'return !id(ha_connected);'   # only blink if disconnected
+          then:
+            - lambda: |-
+                static bool visible = true;
+                visible = !visible;  // toggle
+                id(ha_logo_visible) = visible;
+            - lvgl.label.update:
+                id: ha_logo
+                text_color: red
+                hidden: !lambda 'return !id(ha_logo_visible);'
+          else:
+            - lvgl.label.update:
+                id: ha_logo
+                hidden: false  # always visible when connected
+                text_color: $COLOR_1
+
+      # script to lock the screen
       - lambda: |-
           if (!id(screen_is_on)) return;  // ✅ STOP everything if already off
 
@@ -251,9 +285,11 @@ sensor:
           id: aqi_label
           text: !lambda |-
             char buff[10];
-            sprintf(buff, "AQ: %.0f", x);
+            sprintf(buff, "%.0f", x);
             return std::string(buff);
-          text_color: !lambda |-
+      - lvgl.obj.update:
+          id: air_quality_icon
+          bg_color: !lambda |-
             if (x <= 50) return lv_color_hex(0x00E400);      // good (green)
             if (x <= 100) return lv_color_hex(0xFFFF00);     // moderate (yellow)
             if (x <= 150) return lv_color_hex(0xFF7E00);     // unhealthy for sensitive
@@ -272,8 +308,29 @@ sensor:
           id: wind_label
           text: !lambda |-
             char buff[16];
-            sprintf(buff, "%.0f km/h", x);
+            sprintf(buff, "%.0f", x);
             return std::string(buff);
+
+  - platform: homeassistant
+    id: weather_wind_bearing
+    entity_id: $WEATHER
+    attribute: wind_bearing
+    on_value:
+      - lvgl.label.update:
+          id: wind_dir_label
+          text: !lambda |-
+            float deg = x;
+
+            if (isnan(deg)) return std::string("?");
+
+            if (deg >= 337.5 || deg < 22.5) return "\U000F005D";  // ↑
+            if (deg < 67.5)  return "\U000F005C"; // ↗
+            if (deg < 112.5) return "\U000F0054"; // →
+            if (deg < 157.5) return "\U000F0043"; // ↘
+            if (deg < 202.5) return "\U000F0045"; // ↓
+            if (deg < 247.5) return "\U000F0042"; // ↙
+            if (deg < 292.5) return "\U000F004D"; // ←
+            return "\U000F005B"; // ↖    
 
 text_sensor:
   - platform: homeassistant
@@ -307,7 +364,7 @@ text_sensor:
             // Convert x (state) to image ID
             std::string s = x;        
             
-            if (s == "clearnight") return id(clearnight);
+            if (s == "clear-night") return id(clearnight);
             if (s == "cloudy") return id(cloudy);
             if (s == "fog") return id(fog);
             if (s == "hail") return id(hail);
@@ -446,7 +503,17 @@ font:
       "\U000F075D", # volume up
       "\U000F075E", # volume down
       "\U000F07D0", # Home Assistant icon
-      "\U000F059D"  # Wind icon
+      "\U000F059D", # Wind icon
+      "\U000F02D6", # question
+      "\U000F005D", #arrow up
+      "\U000F005C", #arrow up-rigth
+      "\U000F0054", #arrow rigth
+      "\U000F0043", #arrow bottom-rigth
+      "\U000F0045", #arrow bottom
+      "\U000F0042", #arrow bottom-left
+      "\U000F004D", #arrow left
+      "\U000F005B", #arrow up-left
+      "\U000F0D43", # air quality
     ]
 
 time:
@@ -468,6 +535,7 @@ script:
             if (time.is_valid())
               sprintf(buff, "%02d:%02d", time.hour, time.minute);
             return buff;
+
   - id: screen_off
     then:
       - lambda: |-
@@ -482,6 +550,7 @@ script:
       - lvgl.obj.update:
           id: notification_popup
           clickable: false   # when screen off
+
   - id: screen_on
     then:
       - lambda: |-
@@ -519,6 +588,7 @@ script:
             return "mario:d=4,o=5,b=100:16e6,16e6,32p,8e6,16c6,8e6,8g6,8p,8g,8p,8c6,16p,8g,16p,8e,16p,8a,8b,16a#,8a,16g.,16e6,16g6,8a6,16f6,8g6,8e6,16c6,16d6,8b,16p,8c6,16p,8g,16p,8e,16p,8a,8b,16a#,8a,16g.,16e6,16g6,8a6,16f6,8g6,8e6,16c6,16d6,8b,8p,16g6,16f#6,16f6,16d#6,16p,16e6,16p,16g#,16a,16c6,16p,16a,16c6,16d6,8p,16g6,16f#6,16f6,16d#6,16p,16e6,16p,16c7,16p,16c7,16c7,p,16g6,16f#6,16f6,16d#6,16p,16e6,16p,16g#,16a,16c6,16p,16a,16c6,16d6,8p,16d#6,8p,16d6,8p,16c6";
           
           return "nokia_pop:d=8,o=5,b=370: c5, e5, g5, p, c5, e5, g5";
+
 output:
   - platform: ledc
     pin: GPIO26
@@ -586,30 +656,85 @@ lvgl:
               id: weather_icon_img
               src: initial
               y: -11
-              x: -4
+              x: 3
               align: TOP_LEFT
 
           - label:
               id: weather_temp_label
               align: CENTER
-              y: 9
+              y: -8
               text_font: roboto_big_24
               text_color: 0xFFFFFF
               text: "--°C"
+          - obj:
+              id: wind_dir_obj
+              width: 35
+              height: 35
+              radius: 35
+              y: 23
+              x: -29
+              bg_opa: 50%
+              scrollable: false
+              scrollbar_mode: "OFF"
+              bg_color: 0x0288D1
+              border_width: 1
+              border_color: 0x0288D1
+              align: CENTER
+
+              widgets:
+                - label:
+                    id: wind_dir_label
+                    align: CENTER
+                    text: "\U000F02D6"
+                    text_font: material
+                    text_color: 0xFFFFFF
           - label:
               id: wind_label
               align: CENTER
-              y: 39
+              y: 23
+              x: 8
               text_font: roboto_big_24
-              text_color: 0x0288D1
-              text: "-- km/h"
+              text_color: 0xFFFFFF
+              text: "--"
+          - label:
+              id: wind_label_km
+              align: CENTER
+              y: 23
+              x: 35
+              text_font: roboto
+              text_color: 0xFFFFFF
+              long_mode: WRAP
+              text: "km\n  h"
+          - obj:
+              id: air_quality_icon
+              width: 40
+              height: 40
+              radius: 8
+              y: 65
+              x: -25
+              bg_opa: 50%
+              scrollable: false
+              scrollbar_mode: "OFF"
+              bg_color: green
+              border_width: 1
+              border_color: green
+              align: CENTER
+
+              widgets:
+                - label:
+                    id: air_icon_label
+                    align: CENTER
+                    text: "\U000F0D43"
+                    text_font: material
+                    text_color: 0xFFFFFF
           - label:
               id: aqi_label
               align: CENTER
-              y: 67
+              x: 19
+              y: 65
               text_font: roboto_big_24
               text_color: 0xFFFFFF
-              text: "AQ: --"
+              text: ---
 
     - obj:
         id: media_box
@@ -819,7 +944,7 @@ lvgl:
               text_color: 0xFFFFFF
               long_mode: WRAP
         on_click:
-          - logger.log: "✅ Notification dismissed"
+          - logger.log: "Notification dismissed"
           - rtttl.stop
           - lvgl.obj.update:
               id: notification_popup
