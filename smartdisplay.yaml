@@ -1,7 +1,6 @@
 substitutions:
   BRIGHTNESS: "100"
   COLOR_1: "0x03A9F4"
-  COLOR_2: "0x0288D1"
   MEDIA_PLAYER: "media_player.kitchen"
   GLYPHS: " !\"#$%&'()*+,-./0123456789:;<=>°?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдеёжзийклмнопрстуфхцчшщъыьэюяҐЄІЇґєії"
   icon_xy: '65x65'
@@ -185,7 +184,10 @@ image:
     id: exceptional
     type: RGB565
     transparency: alpha_channel
-    resize: ${icon_xy}
+  - file: "images/arrow.png"
+    id: wind_arrow
+    type: RGB565
+    transparency: alpha_channel
   - file: "images/bgrnd_forest.png"
     id: bgrnd_forest
     type: RGB565
@@ -295,7 +297,15 @@ sensor:
             if (x <= 150) return lv_color_hex(0xFF7E00);     // unhealthy for sensitive
             if (x <= 200) return lv_color_hex(0xFF0000);     // unhealthy
             if (x <= 300) return lv_color_hex(0x99004C);     // very unhealthy
-            return lv_color_hex(0x7E0023);                   // hazardous  
+            return lv_color_hex(0x7E0023);                   // hazardous
+          border_color:
+            !lambda |-
+            if (x <= 50) return lv_color_hex(0x00E400);      // good (green)
+            if (x <= 100) return lv_color_hex(0xFFFF00);     // moderate (yellow)
+            if (x <= 150) return lv_color_hex(0xFF7E00);     // unhealthy for sensitive
+            if (x <= 200) return lv_color_hex(0xFF0000);     // unhealthy
+            if (x <= 300) return lv_color_hex(0x99004C);     // very unhealthy
+            return lv_color_hex(0x7E0023);                   // hazardous     
 
   - platform: homeassistant
     id: weather_wind_speed
@@ -316,21 +326,13 @@ sensor:
     entity_id: $WEATHER
     attribute: wind_bearing
     on_value:
-      - lvgl.label.update:
-          id: wind_dir_label
-          text: !lambda |-
-            float deg = x;
+      - lvgl.image.update:
+          id: wind_arrow_img
+          angle: !lambda |-
+            float deg = x + 90.0;  // arrow points right by default
+            if (deg >= 360.0) deg -= 360.0;
 
-            if (isnan(deg)) return std::string("?");
-
-            if (deg >= 337.5 || deg < 22.5) return "\U000F005D";  // ↑
-            if (deg < 67.5)  return "\U000F005C"; // ↗
-            if (deg < 112.5) return "\U000F0054"; // →
-            if (deg < 157.5) return "\U000F0043"; // ↘
-            if (deg < 202.5) return "\U000F0045"; // ↓
-            if (deg < 247.5) return "\U000F0042"; // ↙
-            if (deg < 292.5) return "\U000F004D"; // ←
-            return "\U000F005B"; // ↖    
+            return int(deg * 10);  // LVGL uses 0.1° units          
 
 text_sensor:
   - platform: homeassistant
@@ -503,16 +505,6 @@ font:
       "\U000F075D", # volume up
       "\U000F075E", # volume down
       "\U000F07D0", # Home Assistant icon
-      "\U000F059D", # Wind icon
-      "\U000F02D6", # question
-      "\U000F005D", #arrow up
-      "\U000F005C", #arrow up-rigth
-      "\U000F0054", #arrow rigth
-      "\U000F0043", #arrow bottom-rigth
-      "\U000F0045", #arrow bottom
-      "\U000F0042", #arrow bottom-left
-      "\U000F004D", #arrow left
-      "\U000F005B", #arrow up-left
       "\U000F0D43", # air quality
     ]
 
@@ -662,37 +654,38 @@ lvgl:
           - label:
               id: weather_temp_label
               align: CENTER
-              y: -8
+              y: -10
               text_font: roboto_big_24
               text_color: 0xFFFFFF
               text: "--°C"
           - obj:
               id: wind_dir_obj
-              width: 35
-              height: 35
-              radius: 35
+              width: 37
+              height: 37
+              radius: 37
+              x: -27
               y: 23
-              x: -29
-              bg_opa: 50%
+              bg_opa: 60%
               scrollable: false
               scrollbar_mode: "OFF"
               bg_color: 0x0288D1
               border_width: 1
               border_color: 0x0288D1
               align: CENTER
-
-              widgets:
-                - label:
-                    id: wind_dir_label
-                    align: CENTER
-                    text: "\U000F02D6"
-                    text_font: material
-                    text_color: 0xFFFFFF
+              # widgets:
+          - image:
+              x: -27
+              y: 23
+              id: wind_arrow_img
+              src: wind_arrow
+              align: CENTER
+              image_recolor: 0xFFFFFF    # recolor to pure white
+              image_recolor_opa: 100%     # full opacity
           - label:
               id: wind_label
               align: CENTER
+              x: 10
               y: 23
-              x: 8
               text_font: roboto_big_24
               text_color: 0xFFFFFF
               text: "--"
@@ -700,7 +693,7 @@ lvgl:
               id: wind_label_km
               align: CENTER
               y: 23
-              x: 35
+              x: 37
               text_font: roboto
               text_color: 0xFFFFFF
               long_mode: WRAP
@@ -712,7 +705,7 @@ lvgl:
               radius: 8
               y: 65
               x: -25
-              bg_opa: 50%
+              bg_opa: 60%
               scrollable: false
               scrollbar_mode: "OFF"
               bg_color: green
@@ -757,7 +750,7 @@ lvgl:
               align: TOP_LEFT
               y: -13
               x: -5
-              width: 200
+              width: 220
               text: "No media"
               text_font: roboto
               text_color: 0xFFFFFF
@@ -927,11 +920,9 @@ lvgl:
         scrollable: false
 
         # Gradient background
-        bg_color: $COLOR_1        # starting color (top)
-        bg_grad_color: $COLOR_2   # ending color (bottom)
-        bg_grad_dir: VER   # vertical gradient
-        border_color: $COLOR_2
-        border_width: 2
+        bg_color: $COLOR_1
+        border_color: $COLOR_1
+        border_width: 0
 
 
         widgets:
