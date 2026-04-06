@@ -402,9 +402,6 @@ select:
       - mission_imp
       - mario
     initial_option: nokia_pop
-    on_value:
-      then:
-        - script.execute: notification_sound
 
 light:
   - platform: monochromatic
@@ -552,7 +549,7 @@ script:
       - lambda: |-
           if (!id(screen_is_on)) return;
 
-          id(screen_is_on) = false;
+          id(screen_is_on) = false;          
           ESP_LOGI("screen", "🌙 Screen OFF");
       - light.turn_off: backlight
       - lvgl.obj.update:
@@ -567,7 +564,7 @@ script:
       - lambda: |-
           if (id(screen_is_on)) return;  // already on
 
-          id(screen_is_on) = true;
+          id(screen_is_on) = true;          
           id(last_touch_ms) = millis();
           ESP_LOGI("screen", "🌞 Screen ON");
       - light.turn_on:
@@ -923,7 +920,7 @@ lvgl:
         bg_color: 0x101010
         border_color: 0x101010
         border_width: 0
-        width: 80
+        width: 100
         height: 80
         radius: 5
         widgets:
