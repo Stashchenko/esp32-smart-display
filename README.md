@@ -3,6 +3,8 @@
 This project implements a **smart display** using an ESP32, ILI9342 TFT display, XPT2046 touchscreen, and ESPHome. 
 It integrates with Home Assistant to display weather, media, notifications, and air quality, with interactive touch and sound feedback.
 
+<img src="demo.jpg" width="320" alt="demo">
+
 Inspired by https://github.com/1achy/ESPHOME-esp32-2432s028r-LCD
 
 ---
