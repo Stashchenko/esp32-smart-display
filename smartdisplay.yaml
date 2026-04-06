@@ -40,6 +40,7 @@ wifi:
   on_connect:
     - lambda: |-
         id(ha_connected) = true;
+    - script.execute: time_update
   on_disconnect:
     - lambda: |-
         id(ha_connected) = false;
@@ -65,6 +66,10 @@ globals:
   - id: ha_logo_visible
     type: bool
     initial_value: 'true'
+  - id: last_center_screen_label_updated
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
 
 number:
   - platform: template
@@ -220,16 +225,23 @@ interval:
 
           float timeout_sec = id(screen_timeout).state;
 
-          if (isnan(timeout_sec) || timeout_sec < 1) {
-            timeout_sec = 20;
-          }
-
           uint32_t timeout_ms = uint32_t(timeout_sec * 1000);
 
           if (millis() - id(last_touch_ms) > timeout_ms) {
             ESP_LOGI("screen", "⏳ Timeout reached -> turning screen OFF");
             id(screen_off).execute();
           }          
+
+  - interval: 300ms
+    then:
+      - if:
+          condition:
+            lambda: |-
+              return (millis() - id(last_center_screen_label_updated) > 1000);
+          then:
+            - lvgl.obj.update:
+                id: center_screen_obj
+                hidden: true
 
 sensor:
   - platform: wifi_signal
@@ -254,16 +266,8 @@ sensor:
     entity_id: $MEDIA_PLAYER
     attribute: volume_level
     on_value:
-      - lvgl.label.update:
-          id: volume_label
-          text: !lambda |-
-            float vol = x;
-            if (isnan(vol)) vol = 0;
+      - script.execute: center_screen_volume
 
-            int vol_percent = int(ceilf(vol * 100.0));
-            char buff[8];
-            sprintf(buff, "VOL: %d%%", vol_percent);
-            return std::string(buff);
 
   - platform: homeassistant
     id: weather_temperature
@@ -458,18 +462,12 @@ touchscreen:
           ESP_LOGI("screen", "👆 Wake screen");
           id(screen_on).execute();
         }
-        id(last_touch_ms) = millis(); 
-        ESP_LOGI("cal", "x=%d, y=%d, x_raw=%d, y_raw=%0d",
-            touch.x,
-            touch.y,
-            touch.x_raw,
-            touch.y_raw
-            );      
+        id(last_touch_ms) = millis();
 
 font:
   - file: "fonts/BebasNeue-Regular.ttf"
     id: bebas_big
-    size: 36
+    size: 40
     bpp: 4
 
   - file: "fonts/Roboto.ttf"
@@ -481,7 +479,7 @@ font:
 
   - file: "fonts/Roboto.ttf"
     id: roboto_big
-    size: 20
+    size: 19
     bpp: 4
     glyphs: $GLYPHS
     ignore_missing_glyphs: true
@@ -502,6 +500,7 @@ font:
       "\U000F03E4", # pause
       "\U000F04AD", # next
       "\U000F04AE", # previous
+      "\U000F057E", # volume
       "\U000F075D", # volume up
       "\U000F075E", # volume down
       "\U000F07D0", # Home Assistant icon
@@ -512,7 +511,7 @@ time:
   - platform: homeassistant
     id: ha_time
     on_time:
-      - cron: '* * * * * *'
+      - cron: '0 * * * * *' # once per minute
         then:
           - script.execute: time_update
 
@@ -520,13 +519,33 @@ script:
   - id: time_update
     then:
       - lvgl.label.update:
-          id: local_time
+          id: label_time
           text: !lambda |-
             char buff[10] = "-";
             auto time = id(ha_time).now();
             if (time.is_valid())
               sprintf(buff, "%02d:%02d", time.hour, time.minute);
             return buff;
+      - lvgl.label.update:
+          id: label_date
+          text: !lambda |-
+            char buff[12] = "-";
+            auto time = id(ha_time).now();
+            if (time.is_valid()) {
+              sprintf(buff, "%02d/%02d/%04d",
+                      time.day_of_month,
+                      time.month,
+                      time.year);
+            }
+            return buff;
+      - lvgl.label.update:
+          id: label_day
+          text: !lambda |-
+            auto time = id(ha_time).now();
+            if (!time.is_valid()) return std::string("---");
+
+            const char* days[] = {"Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"};
+            return std::string(days[time.day_of_week - 1]);  
 
   - id: screen_off
     then:
@@ -581,6 +600,26 @@ script:
           
           return "nokia_pop:d=8,o=5,b=370: c5, e5, g5, p, c5, e5, g5";
 
+  - id: center_screen_volume
+    then:
+      - lambda: |-
+          id(last_center_screen_label_updated) = millis();
+      - lvgl.obj.update:
+          id: center_screen_obj
+          hidden: false
+      - lvgl.label.update:
+          id: center_screen_icon
+          text: "\U000F057E"
+      - lvgl.label.update:
+          id: center_screen_label
+          text: !lambda |-
+            float vol = id(media_volume).state;
+            if (isnan(vol)) vol = 0;
+            int vol_percent = int(ceilf(vol * 100.0));
+            char buff[8];
+            sprintf(buff, "%d%%", vol_percent);
+            return std::string(buff);
+
 output:
   - platform: ledc
     pin: GPIO26
@@ -619,18 +658,33 @@ lvgl:
         text: "\U000F07D0"   # Home Assistant icon
         text_font: material
         text_color: $COLOR_1   # official HA blue
-        translate_x: 0       # optional padding from the edge
-        translate_y: 0       # optional padding from the top
+        translate_x: -2
+        translate_y: 0
 
     - label:
         align: TOP_LEFT
-        id: local_time
+        id: label_time
         text: "--:--"
         text_font: bebas_big
         text_color: 0x000000
-        translate_x: 43
+        translate_x: 37
+        translate_y: 1
+    - label:
+        id: label_date
+        align: TOP_LEFT
+        text: "--/--/--"
+        text_font: roboto_big
+        text_color: 0x101010
+        translate_x: 112
         translate_y: 3
-
+    - label:
+        id: label_day
+        align: TOP_LEFT
+        text: "---------"
+        text_font: roboto_big
+        text_color: 0x101010
+        translate_x: 112
+        translate_y: 19
     - obj:
         id: weather_box
         width: 100
@@ -755,8 +809,6 @@ lvgl:
               text_font: roboto
               text_color: 0xFFFFFF
               long_mode: SCROLL_CIRCULAR
-
-
           # Play / Pause button
           - button:
               id: play_btn
@@ -781,7 +833,6 @@ lvgl:
                     service: media_player.media_play_pause
                     data:
                       entity_id: $MEDIA_PLAYER
-
           # Previous
           - button:
               width: 50
@@ -802,7 +853,6 @@ lvgl:
                     service: media_player.media_previous_track
                     data:
                       entity_id: $MEDIA_PLAYER
-
           # Next
           - button:
               width: 50
@@ -843,7 +893,6 @@ lvgl:
                     service: media_player.volume_up
                     data:
                       entity_id: $MEDIA_PLAYER
-
           # Volume Down button
           - button:
               width: 50
@@ -864,17 +913,34 @@ lvgl:
                     data:
                       entity_id: $MEDIA_PLAYER
 
-          # Volume label inside media_box
+    - obj:
+        id: center_screen_obj
+        align: CENTER
+        clickable: false
+        scrollable: false
+        hidden: true
+        bg_opa: 20%
+        bg_color: 0x101010
+        border_color: 0x101010
+        border_width: 0
+        width: 80
+        height: 80
+        radius: 5
+        widgets:
           - label:
-              id: volume_label
-              align: TOP_RIGHT
-              y: -13
-              x: 6
-              width: 55
-              text_font: roboto
-              long_mode: SCROLL_CIRCULAR
+              id: center_screen_icon
+              translate_x: -14
+              translate_y: 6
+              text_font: material
               text_color: 0xFFFFFF
-              text: "N/A"
+              text: ""
+          - label:
+              id: center_screen_label
+              translate_x: 25
+              translate_y: 6
+              text_font: bebas_big
+              text_color: 0xFFFFFF
+              text: "--"
 
     - obj:
         id: touch_overlay
@@ -918,8 +984,6 @@ lvgl:
         hidden: true
         clickable: true
         scrollable: false
-
-        # Gradient background
         bg_color: $COLOR_1
         border_color: $COLOR_1
         border_width: 0
