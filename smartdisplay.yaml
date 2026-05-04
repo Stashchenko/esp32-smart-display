@@ -1,9 +1,10 @@
 substitutions:
   BRIGHTNESS: "100"
   COLOR_1: "0x03A9F4"
-  MEDIA_PLAYER: "media_player.kitchen"
   GLYPHS: " !\"#$%&'()*+,-./0123456789:;<=>°?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдеёжзийклмнопрстуфхцчшщъыьэюяҐЄІЇґєії"
   icon_xy: '65x65'
+  #  HA entities
+  MEDIA_PLAYER: "media_player.kitchen"
   WEATHER: "weather.forecast_home"
   AIR_QUALITY: "sensor.air_quality_index_krakow_air_quality_index"
 
@@ -23,8 +24,13 @@ esp32:
   board: esp32dev
   framework:
     type: arduino
+    advanced:
+      minimum_chip_revision: 3.1
+      sram1_as_iram: true
 
 logger:
+  level: WARN
+  baud_rate: 0
 
 api:
 
@@ -66,10 +72,6 @@ globals:
   - id: ha_logo_visible
     type: bool
     initial_value: 'true'
-  - id: last_center_screen_label_updated
-    type: uint32_t
-    restore_value: no
-    initial_value: '0'
 
 deep_sleep:
   id: night_sleep
@@ -148,9 +150,8 @@ switch:
     name: "Mute"
     id: mute_notifications
     optimistic: true
-    restore_mode: RESTORE_DEFAULT_OFF
     icon: "mdi:bell-off"
-
+    restore_mode: RESTORE_DEFAULT_OFF
   - platform: template
     name: "Sleep Enabled"
     id: sleep_enabled
@@ -281,17 +282,6 @@ interval:
             id(screen_off).execute();
           }          
 
-  - interval: 300ms
-    then:
-      - if:
-          condition:
-            lambda: |-
-              return (millis() - id(last_center_screen_label_updated) > 1000);
-          then:
-            - lvgl.obj.update:
-                id: center_screen_obj
-                hidden: true
-
 sensor:
   - platform: adc
     pin: GPIO35
@@ -302,7 +292,7 @@ sensor:
     state_class: measurement
     accuracy_decimals: 2
     attenuation: 11db
-    update_interval: 30s
+    update_interval: 60s
     on_value:
       then:
         - component.update: batt_level
@@ -365,7 +355,7 @@ sensor:
             id: battery_label
             text: !lambda |-
               char buff[8];
-              sprintf(buff, "%.0f%", x);
+              sprintf(buff, "%.0f", x);
               return std::string(buff);  
 
   - platform: wifi_signal
@@ -741,8 +731,6 @@ script:
 
   - id: center_screen_volume
     then:
-      - lambda: |-
-          id(last_center_screen_label_updated) = millis();
       - lvgl.obj.update:
           id: center_screen_obj
           hidden: false
@@ -758,7 +746,15 @@ script:
             char buff[8];
             sprintf(buff, "%d%%", vol_percent);
             return std::string(buff);
+      - script.execute: hide_center_label
 
+  - id: hide_center_label
+    mode: restart
+    then:
+      - delay: 1.5s
+      - lvgl.obj.update:
+          id: center_screen_obj
+          hidden: true
   - id: sleep_decider
     then:
       - lambda: |-
