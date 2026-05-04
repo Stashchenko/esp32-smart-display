@@ -23,8 +23,13 @@ esp32:
   board: esp32dev
   framework:
     type: arduino
+    advanced:
+      minimum_chip_revision: 3.1
+      sram1_as_iram: true
 
 logger:
+  level: WARN
+  baud_rate: 0
 
 api:
 
@@ -148,9 +153,8 @@ switch:
     name: "Mute"
     id: mute_notifications
     optimistic: true
-    restore_mode: RESTORE_DEFAULT_OFF
     icon: "mdi:bell-off"
-
+    restore_mode: RESTORE_DEFAULT_OFF
   - platform: template
     name: "Sleep Enabled"
     id: sleep_enabled
@@ -302,7 +306,7 @@ sensor:
     state_class: measurement
     accuracy_decimals: 2
     attenuation: 11db
-    update_interval: 30s
+    update_interval: 60s
     on_value:
       then:
         - component.update: batt_level
@@ -365,7 +369,7 @@ sensor:
             id: battery_label
             text: !lambda |-
               char buff[8];
-              sprintf(buff, "%.0f%", x);
+              sprintf(buff, "%.0f", x);
               return std::string(buff);  
 
   - platform: wifi_signal
