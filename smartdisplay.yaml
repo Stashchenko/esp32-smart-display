@@ -71,17 +71,50 @@ globals:
     restore_value: no
     initial_value: '0'
 
+deep_sleep:
+  id: night_sleep
+
 number:
+  - platform: template
+    name: "Sleep Start Hour"
+    id: sleep_start_hour
+    unit_of_measurement: "h"
+    icon: "mdi:clock-start"
+    min_value: 0
+    max_value: 23
+    step: 1
+    restore_value: true
+    initial_value: 1
+    mode: box
+    optimistic: true
+    entity_category: config
+
+  - platform: template
+    name: "Sleep End Hour"
+    id: sleep_end_hour
+    unit_of_measurement: "h"
+    icon: "mdi:clock-end"
+    min_value: 0
+    max_value: 23
+    step: 1
+    restore_value: true
+    initial_value: 8
+    mode: box
+    optimistic: true
+    entity_category: config
+
   - platform: template
     name: "Screen Timeout"
     id: screen_timeout
+    icon: "mdi:timer-sand"
     min_value: 5
     max_value: 60
     step: 1
+    initial_value: 15
     unit_of_measurement: "s"
-    initial_value: 20
     restore_value: true
     optimistic: true
+    entity_category: config
 
 text:
   - platform: template
@@ -89,6 +122,7 @@ text:
     id: notification_input
     optimistic: true
     mode: text
+    icon: "mdi:message-text"
     initial_value: ""
     on_value:
       then:
@@ -115,7 +149,15 @@ switch:
     id: mute_notifications
     optimistic: true
     restore_mode: RESTORE_DEFAULT_OFF
+    icon: "mdi:bell-off"
 
+  - platform: template
+    name: "Sleep Enabled"
+    id: sleep_enabled
+    icon: "mdi:sleep"
+    restore_mode: RESTORE_DEFAULT_OFF
+    optimistic: true
+    entity_category: config
 image:
   - file: "images/0-default.png"
     id: initial
@@ -251,6 +293,81 @@ interval:
                 hidden: true
 
 sensor:
+  - platform: adc
+    pin: GPIO35
+    name: "Battery Voltage"
+    id: batt_voltage
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    accuracy_decimals: 2
+    attenuation: 11db
+    update_interval: 30s
+    on_value:
+      then:
+        - component.update: batt_level
+    filters:
+      - lambda: |-
+          return x * 1.991;
+      - sliding_window_moving_average:
+          window_size: 20
+          send_every: 5
+
+  - platform: template
+    name: "Battery Level"
+    id: batt_level
+    unit_of_measurement: "%"
+    device_class: battery
+    state_class: measurement
+    accuracy_decimals: 1
+    lambda: |-
+      auto v = id(batt_voltage).state;
+
+      if (std::isnan(v)) {
+        return {};
+      }
+      // ===== CONFIG =====
+      const float VMIN = 2.92;   // battery empty
+      const float VMAX = 4.25;  // battery full
+
+      // region split points (tuned for Li-ion shape)
+      const float VHIGH = 3.9;
+      const float VMID  = 3.7;
+
+      // ===== LOGIC =====
+      if (v >= VMAX) return 100.0;
+      if (v <= VMIN) return 0.0;
+
+      // top (slow drop)
+      if (v >= VHIGH) {
+        return 75.0 + (v - VHIGH) * (25.0 / (VMAX - VHIGH));
+      }
+
+      // middle (flat plateau)
+      if (v >= VMID) {
+        return 50.0 + (v - VMID) * (25.0 / (VHIGH - VMID));
+      }
+
+      // bottom (fast drop)
+      return (v - VMIN) * (50.0 / (VMID - VMIN));
+    on_value:
+      then:
+        - lvgl.arc.update:
+            id: battery_arc
+            value: !lambda 'return x;'
+            indicator:
+              arc_color: !lambda |-
+                if (x >= 80) return lv_color_hex(0x00FF00); // green
+                if (x >= 50) return lv_color_hex(0x0000FF); // blue 
+                if (x >= 15) return lv_color_hex(0xFFFF00); // yellow
+                return lv_color_hex(0xFF0000); // red
+        - lvgl.label.update:
+            id: battery_label
+            text: !lambda |-
+              char buff[8];
+              sprintf(buff, "%.0f%", x);
+              return std::string(buff);  
+
   - platform: wifi_signal
     name: "WiFi Signal"
     update_interval: 60s
@@ -274,7 +391,6 @@ sensor:
     attribute: volume_level
     on_value:
       - script.execute: center_screen_volume
-
 
   - platform: homeassistant
     id: weather_temperature
@@ -399,6 +515,7 @@ select:
   - platform: template
     name: "Melody"
     id: notify_melody
+    icon: "mdi:music-note"
     optimistic: true
     options:
       - nokia_pop
@@ -415,6 +532,7 @@ light:
     output: backlight_pwm
     name: Display Backlight
     id: backlight
+    icon: "mdi:brightness-6"
     restore_mode: ALWAYS_OFF
     on_turn_on:
       - lambda: |-
@@ -516,15 +634,21 @@ font:
       "\U000F075E", # volume down
       "\U000F07D0", # Home Assistant icon
       "\U000F0D43", # air quality
+      "\U000F0079", # battery icon
     ]
 
 time:
   - platform: homeassistant
     id: ha_time
+    on_time_sync:
+      then:
+        - script.execute: time_update
+        - script.execute: sleep_decider
     on_time:
       - cron: '0 * * * * *' # once per minute
         then:
           - script.execute: time_update
+          - script.execute: sleep_decider
 
 script:
   - id: time_update
@@ -635,6 +759,47 @@ script:
             sprintf(buff, "%d%%", vol_percent);
             return std::string(buff);
 
+  - id: sleep_decider
+    then:
+      - lambda: |-
+          ESP_LOGI("sleep", "Check sleep");
+          if (!id(sleep_enabled).state) {
+            ESP_LOGI("sleep", "Sleep disabled → staying awake");
+            return;
+          }
+
+          auto t = id(ha_time).now();
+          if (!t.is_valid()) {
+            ESP_LOGW("sleep", "Time is not ready");           
+            return;
+          }
+
+          int now_h = t.hour;
+          int start = int(id(sleep_start_hour).state);
+          int end   = int(id(sleep_end_hour).state);
+
+          bool in_sleep;
+          if (start < end) {
+            in_sleep = (now_h >= start && now_h < end);
+          } else {
+            in_sleep = (now_h >= start || now_h < end);
+          }
+
+          if (in_sleep) {
+            ESP_LOGI("sleep", "🌙 Sleep window → going back to deep sleep");
+            id(go_to_sleep).execute();
+          } else {
+            ESP_LOGI("sleep", "🌞 Awake window → staying active");
+          }
+
+  - id: go_to_sleep
+    then:
+      - script.execute: screen_off
+      - delay: 1s
+      - logger.log: "Entering Deep Sleep for 30 min..."
+      - deep_sleep.enter:
+          id: night_sleep
+          sleep_duration: 30min
 output:
   - platform: ledc
     pin: GPIO26
@@ -700,6 +865,56 @@ lvgl:
         text_color: 0x101010
         translate_x: 112
         translate_y: 19
+    - obj:
+        id: battery_widget
+        width: 63
+        height: 63
+        align: TOP_LEFT
+        translate_x: 0
+        translate_y: 42
+        bg_color: 0x101010
+        bg_opa: 69%
+        border_width: 1
+        radius: 5
+        border_color: 0x101010
+        scrollable: false
+        scrollbar_mode: "OFF"
+        widgets:
+          - arc:
+              id: battery_arc
+              width: 60
+              height: 60
+              translate_y: 3
+              align: CENTER
+              min_value: 0
+              max_value: 100
+              value: 0
+              start_angle: 135
+              end_angle: 45
+              rotation: 0
+              adjustable: false
+              arc_width: 5
+              indicator:
+                arc_color: $COLOR_1
+                arc_width: 5
+              knob:
+                bg_opa: 0
+
+          - label:
+              id: battery_label
+              align: CENTER
+              translate_y: 2
+              text: "--"
+              text_font: roboto_big_24
+              text_color: 0xFFFFFF
+          - label:
+              id: battery_label_percentage
+              translate_y: 20
+              align: CENTER
+              text_font: roboto
+              text_color: 0xFFFFFF
+              long_mode: WRAP
+              text: "%"
     - obj:
         id: weather_box
         width: 100
