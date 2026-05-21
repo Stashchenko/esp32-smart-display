@@ -1,7 +1,7 @@
 substitutions:
   BRIGHTNESS: "100"
   COLOR_1: "0x03A9F4"
-  GLYPHS: " !\"#$%&'()*+,-./0123456789:;<=>°?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдеёжзийклмнопрстуфхцчшщъыьэюяҐЄІЇґєії"
+  GLYPHS: " !\"#$%&'()*+,-./0123456789:;<=>°?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`•abcdefghijklmnopqrstuvwxyz{|}~АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдеёжзийклмнопрстуфхцчшщъыьэюяҐЄІЇґєії"
   icon_xy: '65x65'
   #  HA entities
   MEDIA_PLAYER: "media_player.kitchen"
@@ -11,7 +11,14 @@ substitutions:
 esphome:
   name: smart-display
   friendly_name: SmartDisplay
+  platformio_options:
+    board_build.f_cpu: 160000000L # Drops CPU to 160MHz
   on_boot:
+    - priority: 800 # Run this extremely early
+      then:
+        - output.turn_off: cyd_red
+        - output.turn_off: cyd_green
+        - output.turn_off: cyd_blue
     - priority: 600
       then:
         - light.turn_on:
@@ -29,7 +36,7 @@ esp32:
       sram1_as_iram: true
 
 logger:
-  level: WARN
+  level: ERROR
   baud_rate: 0
 
 api:
@@ -40,6 +47,7 @@ ota:
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
+  power_save_mode: light
 
   ap:
     ssid: "SmartDisplayHotspot"
@@ -250,24 +258,28 @@ image:
 interval:
   - interval: 1s
     then:
-      # check ha connection
+      # UI updates only when screen ON
       - if:
           condition:
-            lambda: 'return !id(ha_connected);'   # only blink if disconnected
+            lambda: 'return id(screen_is_on);'
           then:
-            - lambda: |-
-                static bool visible = true;
-                visible = !visible;  // toggle
-                id(ha_logo_visible) = visible;
-            - lvgl.label.update:
-                id: ha_logo
-                text_color: red
-                hidden: !lambda 'return !id(ha_logo_visible);'
-          else:
-            - lvgl.label.update:
-                id: ha_logo
-                hidden: false  # always visible when connected
-                text_color: $COLOR_1
+            - if: # check ha connection
+                condition:
+                  lambda: 'return !id(ha_connected);'
+                then:
+                  - lambda: |-
+                      static bool visible = true;
+                      visible = !visible;
+                      id(ha_logo_visible) = visible;
+                  - lvgl.label.update:
+                      id: ha_logo
+                      text_color: red
+                      hidden: !lambda 'return !id(ha_logo_visible);'
+                else:
+                  - lvgl.label.update:
+                      id: ha_logo
+                      hidden: false
+                      text_color: $COLOR_1
 
       # script to lock the screen
       - lambda: |-
@@ -292,7 +304,7 @@ sensor:
     state_class: measurement
     accuracy_decimals: 2
     attenuation: 11db
-    update_interval: 60s
+    update_interval: 5min
     on_value:
       then:
         - component.update: batt_level
@@ -300,8 +312,8 @@ sensor:
       - lambda: |-
           return x * 1.991;
       - sliding_window_moving_average:
-          window_size: 20
-          send_every: 5
+          window_size: 10
+          send_every: 10
 
   - platform: template
     name: "Battery Level"
@@ -317,7 +329,7 @@ sensor:
         return {};
       }
       // ===== CONFIG =====
-      const float VMIN = 2.92;   // battery empty
+      const float VMIN = 2.98;   // battery empty
       const float VMAX = 4.25;  // battery full
 
       // region split points (tuned for Li-ion shape)
@@ -360,7 +372,7 @@ sensor:
 
   - platform: wifi_signal
     name: "WiFi Signal"
-    update_interval: 60s
+    update_interval: 5min
     id: wifi_signal_db
     entity_category: "diagnostic"
     internal: true  # hide this sensor to HA,
@@ -542,6 +554,7 @@ spi:
 
 display:
   - platform: ili9xxx
+    id: my_display
     model: ILI9342
     invert_colors: false
     spi_id: tft
@@ -559,7 +572,7 @@ touchscreen:
   spi_id: touch
   cs_pin: GPIO33
   interrupt_pin: GPIO36
-  update_interval: 150ms
+  update_interval: 250ms
   threshold: 400
   calibration:
     x_min: 240
@@ -686,6 +699,9 @@ script:
       - lvgl.obj.update:
           id: notification_popup
           clickable: false   # when screen off
+      #  disable lvgl rendering
+      - lvgl.pause:
+      - component.update: my_display
 
   - id: screen_on
     then:
@@ -695,6 +711,8 @@ script:
           id(screen_is_on) = true;          
           id(last_touch_ms) = millis();
           ESP_LOGI("screen", "🌞 Screen ON");
+      - lvgl.resume:
+      - component.update: my_display
       - light.turn_on:
           id: backlight
           brightness: ${BRIGHTNESS}%
@@ -797,6 +815,18 @@ script:
           id: night_sleep
           sleep_duration: 30min
 output:
+  - platform: gpio
+    pin: GPIO4
+    id: cyd_red
+    inverted: true
+  - platform: gpio
+    pin: GPIO16
+    id: cyd_green
+    inverted: true
+  - platform: gpio
+    pin: GPIO17
+    id: cyd_blue
+    inverted: true
   - platform: ledc
     pin: GPIO26
     id: rtttl_out
