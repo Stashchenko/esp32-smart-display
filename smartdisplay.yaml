@@ -7,6 +7,7 @@ substitutions:
   MEDIA_PLAYER: "media_player.kitchen"
   WEATHER: "weather.forecast_home"
   AIR_QUALITY: "sensor.air_quality_index_krakow_air_quality_index"
+  CLIMATE: "climate.ac_irblaster_samsung_aqv"
 
 esphome:
   name: smart-display
@@ -294,6 +295,10 @@ interval:
             id(screen_off).execute();
           }          
 
+binary_sensor:
+  - platform: status
+    name: "Device Status"
+
 sensor:
   - platform: adc
     pin: GPIO35
@@ -370,23 +375,6 @@ sensor:
               sprintf(buff, "%.0f", x);
               return std::string(buff);  
 
-  - platform: wifi_signal
-    name: "WiFi Signal"
-    update_interval: 5min
-    id: wifi_signal_db
-    entity_category: "diagnostic"
-    internal: true  # hide this sensor to HA,
-
-  - platform: copy
-    source_id: wifi_signal_db
-    name: "WiFi Signal Percent"
-    icon: mdi:wifi
-    filters:
-      - lambda: return min(max(2 * (x + 100.0), 0.0), 100.0);
-    unit_of_measurement: " %"
-    entity_category: "diagnostic"
-    device_class: ""
-
   - platform: homeassistant
     id: media_volume
     entity_id: $MEDIA_PLAYER
@@ -461,7 +449,32 @@ sensor:
             float deg = x + 90.0;  // arrow points right by default
             if (deg >= 360.0) deg -= 360.0;
 
-            return int(deg * 10);  // LVGL uses 0.1° units          
+            return int(deg * 10);  // LVGL uses 0.1° units
+  # --- AC Tracked Sensors ---
+  - platform: homeassistant
+    id: ac_current_temp
+    entity_id: $CLIMATE
+    attribute: current_temperature
+    on_value:
+      - lvgl.label.update:
+          id: temperature_home_label
+          text: !lambda |-
+            char buff[12];
+            sprintf(buff, "%.0f°", x);
+            return std::string(buff);
+
+  - platform: homeassistant
+    id: ac_target_temp
+    entity_id: $CLIMATE
+    attribute: temperature
+    on_value:
+      - script.execute: center_screen_ac_temp
+      - lvgl.label.update:
+          id: temperature_target_label
+          text: !lambda |-
+            char buff[12];
+            sprintf(buff, "%.0f°", x);
+            return std::string(buff); 
 
 text_sensor:
   - platform: homeassistant
@@ -513,6 +526,22 @@ text_sensor:
             
             return id(initial);
 
+    # --- AC Tracked Text Sensor with Dynamic Button Color Styling ---
+  # AC hvac mode
+  - platform: homeassistant
+    id: ac_hvac_mode
+    entity_id: $CLIMATE
+    on_value:
+      then:
+        - lvgl.dropdown.update:
+            id: ac_mode_dropdown
+            selected_index: !lambda |-
+              if (x == "off") return 0;
+              if (x == "cool") return 1;
+              if (x == "heat") return 2;
+              if (x == "dry") return 3;
+              return 0;
+
 select:
   - platform: template
     name: "Melody"
@@ -528,6 +557,24 @@ select:
       - mission_imp
       - mario
     initial_option: nokia_pop
+
+  - platform: lvgl
+    widget: ac_mode_dropdown
+    id: ac_mode_selector
+    name: "AC Mode Selector"
+    internal: true
+    on_value:
+      then:
+        - homeassistant.service:
+            service: climate.set_hvac_mode
+            data:
+              entity_id: $CLIMATE
+              hvac_mode: !lambda |-
+                if (x == "\U000F001B") return "off";
+                if (x == "\U000F0717") return "cool";
+                if (x == "\U000F0238") return "heat";
+                if (x == "\U000F058E") return "dry";
+                return "off";
 
 light:
   - platform: monochromatic
@@ -638,6 +685,23 @@ font:
       "\U000F07D0", # Home Assistant icon
       "\U000F0D43", # air quality
       "\U000F0079", # battery icon
+      "\U000F050F", # thermometer
+    ]
+
+  - file: "fonts/materialdesignicons-webfont.ttf"
+    id: material_small
+    size: 27
+    bpp: 4
+    glyphs: [
+      "\U000F001B", # A/C Icon
+      "\U000F0717", # COOL Icon
+      "\U000F0238", # HEAT Icon
+      "\U000F058E", # DRY Icon
+      "\U000F0140", # Chevron-down
+      "\U000F0E05", # temp. +
+      "\U000F0E04", # temp. -
+      "\U000F0F54", # home thermometer
+      "\U000F1B0F", # thermometer-auto
     ]
 
 time:
@@ -766,6 +830,26 @@ script:
             return std::string(buff);
       - script.execute: hide_center_label
 
+  - id: center_screen_ac_temp
+    then:
+      - lvgl.obj.update:
+          id: center_screen_obj
+          hidden: false
+      - lvgl.label.update:
+          id: center_screen_icon
+          text: "\U000F050F"
+      - lvgl.label.update:
+          id: center_screen_label
+          text: !lambda |-
+            float temp = id(ac_target_temp).state;
+            if (isnan(temp)) {
+              return std::string("--°");
+            }
+            char buff[8];
+            sprintf(buff, "%.0f°", temp);
+            return std::string(buff);
+      - script.execute: hide_center_label
+
   - id: hide_center_label
     mode: restart
     then:
@@ -805,7 +889,6 @@ script:
           } else {
             ESP_LOGI("sleep", "🌞 Awake window → staying active");
           }
-
   - id: go_to_sleep
     then:
       - script.execute: screen_off
@@ -814,6 +897,7 @@ script:
       - deep_sleep.enter:
           id: night_sleep
           sleep_duration: 30min
+
 output:
   - platform: gpio
     pin: GPIO4
@@ -857,7 +941,6 @@ lvgl:
               id: bgrnd_forest_img
               src: bgrnd_forest
               align: CENTER
-
     - label:
         id: ha_logo
         align: TOP_LEFT
@@ -866,7 +949,6 @@ lvgl:
         text_color: $COLOR_1   # official HA blue
         translate_x: -2
         translate_y: 0
-
     - label:
         align: TOP_LEFT
         id: label_time
@@ -891,13 +973,144 @@ lvgl:
         text_color: 0x101010
         translate_x: 112
         translate_y: 19
+    #  temperature widget
+    - obj:
+        id: temperature_widget
+        width: 63
+        height: 63
+        align: TOP_LEFT
+        translate_x: 0
+        translate_y: 42
+        bg_color: 0x101010
+        bg_opa: 69%
+        border_width: 1
+        radius: 5
+        border_color: 0x101010
+        scrollable: false
+        scrollbar_mode: "OFF"
+        widgets:
+          - label:
+              align: CENTER
+              translate_x: -15
+              translate_y: -15
+              text: "\U000F0F54"
+              text_font: material_small
+              text_color: 0x101010
+          - label:
+              align: CENTER
+              translate_x: -15
+              translate_y: 15
+              text: "\U000F1B0F"
+              text_font: material_small
+              text_color: $COLOR_1
+          - label:
+              id: temperature_home_label
+              translate_x: 13
+              translate_y: -15
+              align: CENTER
+              text_font: roboto_big
+              text_color: 0xFFFFFF
+              long_mode: WRAP
+              text: "°"
+          - label:
+              id: temperature_target_label
+              translate_x: 13
+              translate_y: 15
+              align: CENTER
+              text_font: roboto_big
+              text_color: 0xFFFFFF
+              long_mode: WRAP
+              text: "°"
+    # --- Expanded AC Control Box Widget ---
+    - obj:
+        id: ac_box
+        width: 159
+        height: 63
+        align: TOP_LEFT
+        translate_x: 62
+        translate_y: 42
+        bg_color: 0x101010
+        bg_opa: 69%
+        border_width: 1
+        radius: 5
+        border_color: 0x101010
+        scrollable: false
+        scrollbar_mode: "OFF"
+        widgets:
+          # Minus Button (Left Side)
+          - button:
+              id: ac_temp_down
+              width: 40
+              height: 54
+              align: TOP_LEFT
+              x: -11
+              y: -10
+              bg_color: 0xFFFFFF
+              widgets:
+                - label:
+                    align: CENTER
+                    text: "\U000F0E04"
+                    text_color: 0x101010
+                    text_font: material_small
+              on_click:
+                - homeassistant.service:
+                    service: climate.set_temperature
+                    data:
+                      entity_id: $CLIMATE
+                      temperature: !lambda "return to_string(id(ac_target_temp).state - 1.0);"
+
+          # Icon Dropdown (Center)
+          - dropdown:
+              id: ac_mode_dropdown
+              width: 65
+              height: 54
+              symbol: "\U000F0140"
+              align: TOP_LEFT
+              x: 33
+              y: -10
+              options:
+                - "\U000F001B"
+                - "\U000F0717"
+                - "\U000F0238"
+                - "\U000F058E"
+              bg_color: $COLOR_1
+              text_color: 0xFFFFFF
+              border_color: $COLOR_1
+              text_font: material_small
+              dropdown_list:
+                pad_all: 4
+                scrollable: false
+                text_align: CENTER
+                text_line_space: 4
+                text_font: material_small
+          # Plus Button (Right Side)
+          - button:
+              id: ac_temp_up
+              width: 40
+              height: 54
+              align: TOP_RIGHT
+              x: 11
+              y: -10
+              bg_color: 0xFFFFFF
+              widgets:
+                - label:
+                    align: CENTER
+                    text: "\U000F0E05"
+                    text_color: 0x101010
+                    text_font: material_small
+              on_click:
+                - homeassistant.service:
+                    service: climate.set_temperature
+                    data:
+                      entity_id: $CLIMATE
+                      temperature: !lambda "return to_string(id(ac_target_temp).state + 1.0);"
     - obj:
         id: battery_widget
         width: 63
         height: 63
         align: TOP_LEFT
         translate_x: 0
-        translate_y: 42
+        translate_y: 104
         bg_color: 0x101010
         bg_opa: 69%
         border_width: 1
@@ -1058,7 +1271,7 @@ lvgl:
           - label:
               id: media_label
               align: TOP_LEFT
-              x: -5
+              x: -8
               y: -16
               width: 315
               text: "No media"
@@ -1244,8 +1457,6 @@ lvgl:
         bg_color: $COLOR_1
         border_color: $COLOR_1
         border_width: 0
-
-
         widgets:
           - label:
               id: notification_label
