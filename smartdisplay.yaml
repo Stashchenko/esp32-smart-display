@@ -308,17 +308,17 @@ sensor:
     device_class: voltage
     state_class: measurement
     accuracy_decimals: 2
-    attenuation: 11db
-    update_interval: 5min
+    attenuation: 12db
+    update_interval: 1min
     on_value:
       then:
         - component.update: batt_level
     filters:
       - lambda: |-
-          return x * 1.991;
+          return x * 1.995;
       - sliding_window_moving_average:
-          window_size: 10
-          send_every: 10
+          window_size: 15
+          send_every: 1
 
   - platform: template
     name: "Battery Level"
@@ -333,30 +333,35 @@ sensor:
       if (std::isnan(v)) {
         return {};
       }
-      // ===== CONFIG =====
-      const float VMIN = 2.98;   // battery empty
-      const float VMAX = 4.25;  // battery full
-
-      // region split points (tuned for Li-ion shape)
-      const float VHIGH = 3.9;
-      const float VMID  = 3.7;
+      
+      // ===== CONFIG (Tuned for standard 3.7V Li-ion) =====
+      const float VMAX  = 4.20;   // 100%: Fully charged
+      const float VHIGH = 3.95;   //  75%: Top drop-off
+      const float VMID  = 3.75;   //  50%: Middle of the flat plateau
+      const float VLOW  = 3.50;   //  15%: Bottom of plateau, about to drop fast
+      const float VMIN  = 3.20;   //   0%: Electronics brown-out point
 
       // ===== LOGIC =====
       if (v >= VMAX) return 100.0;
       if (v <= VMIN) return 0.0;
 
-      // top (slow drop)
+      // 100% to 75% (Top curve)
       if (v >= VHIGH) {
         return 75.0 + (v - VHIGH) * (25.0 / (VMAX - VHIGH));
       }
 
-      // middle (flat plateau)
+      // 75% to 50% (Upper flat plateau)
       if (v >= VMID) {
         return 50.0 + (v - VMID) * (25.0 / (VHIGH - VMID));
       }
+      
+      // 50% to 15% (Lower flat plateau)
+      if (v >= VLOW) {
+        return 15.0 + (v - VLOW) * (35.0 / (VMID - VLOW));
+      }
 
-      // bottom (fast drop)
-      return (v - VMIN) * (50.0 / (VMID - VMIN));
+      // 15% to 0% (Fast drop at the end)
+      return (v - VMIN) * (15.0 / (VLOW - VMIN));
     on_value:
       then:
         - lvgl.arc.update:
@@ -445,9 +450,10 @@ sensor:
     on_value:
       - lvgl.image.update:
           id: wind_arrow_img
-          angle: !lambda |-
-            float deg = x + 90.0;  // arrow points right by default
+          rotation: !lambda |-
+            float deg = x + 90.0;
             if (deg >= 360.0) deg -= 360.0;
+            if (deg < 0.0) deg += 360.0;
 
             return int(deg * 10);  // LVGL uses 0.1° units
   # --- AC Tracked Sensors ---
@@ -600,19 +606,17 @@ spi:
     miso_pin: GPIO39
 
 display:
-  - platform: ili9xxx
+  - platform: mipi_spi
     id: my_display
-    model: ILI9342
-    invert_colors: false
+    model: ESP32-2432S028-9342
     spi_id: tft
     cs_pin: GPIO15
     dc_pin: GPIO2
-    transform:
-      mirror_y: true
-    color_palette: 8BIT
-    color_order: RGB
-    auto_clear_enabled: false
-    update_interval: never
+    color_order: rgb            # Match the lowercase requirement for mipi_spi
+    color_depth: 16             # Upgrade to crisp 16-bit color depth
+    auto_clear_enabled: false   # Required to let LVGL handle rendering
+    update_interval: never      # Required to let LVGL handle rendering
+
 
 touchscreen:
   platform: xpt2046
@@ -628,6 +632,8 @@ touchscreen:
     y_max: 3750
   transform:
     swap_xy: true
+    mirror_x: true
+    mirror_y: true
   on_touch:
     - lambda: |-
         if (!id(screen_is_on)) {
@@ -710,7 +716,6 @@ time:
     on_time_sync:
       then:
         - script.execute: time_update
-        - script.execute: sleep_decider
     on_time:
       - cron: '0 * * * * *' # once per minute
         then:
@@ -861,6 +866,13 @@ script:
     then:
       - lambda: |-
           ESP_LOGI("sleep", "Check sleep");
+          if (std::isnan(id(sleep_enabled).state) || 
+              std::isnan(id(sleep_start_hour).state) || 
+              std::isnan(id(sleep_end_hour).state)) {
+            ESP_LOGW("sleep", "Home Assistant data not ready yet (NaN). Waiting for next minute...");
+            return;
+          }
+
           if (!id(sleep_enabled).state) {
             ESP_LOGI("sleep", "Sleep disabled → staying awake");
             return;
@@ -890,13 +902,33 @@ script:
             ESP_LOGI("sleep", "🌞 Awake window → staying active");
           }
   - id: go_to_sleep
+    mode: restart
     then:
       - script.execute: screen_off
       - delay: 1s
-      - logger.log: "Entering Deep Sleep for 30 min..."
       - deep_sleep.enter:
           id: night_sleep
-          sleep_duration: 30min
+          sleep_duration: !lambda |-
+            auto t = id(ha_time).now();
+            if (!t.is_valid()) {
+              return 30 * 60 * 1000; // Fallback to 30 mins if Home Assistant time hasn't synced yet
+            }
+            
+            int end_h = int(id(sleep_end_hour).state);
+            
+            // Calculate current time and target wake time in seconds from midnight
+            int current_secs = t.hour * 3600 + t.minute * 60 + t.second;
+            int target_secs = end_h * 3600;
+            
+            // Calculate the difference
+            int diff_secs = target_secs - current_secs;
+            if (diff_secs <= 0) {
+              // If the target hour has already passed today, sleep until that hour tomorrow
+              diff_secs += 24 * 3600;
+            }
+            
+            // Return duration in milliseconds
+            return diff_secs * 1000;
 
 output:
   - platform: gpio
@@ -926,6 +958,7 @@ lvgl:
   bg_color: 0x000000
   scrollbar_mode: "OFF"
   scrollable: false
+  rotation: 180
   widgets:
     - obj:
         id: bgfill
