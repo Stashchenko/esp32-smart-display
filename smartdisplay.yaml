@@ -323,7 +323,7 @@ sensor:
         then:
           - deep_sleep.enter:
               id: night_sleep
-              sleep_duration: 0s  # '0s' forces the ESP32 to sleep INDEFINITELY.
+              sleep_duration: 30d  # '30d' forces the ESP32 to sleep 30 days.
     filters:
       # - lambda: |-
       #         ESP_LOGI("battery", "RAW ADC=%.3fV", x);
@@ -363,7 +363,7 @@ sensor:
       }
       
       // ===== CONFIG (Tuned for standard 3.7V Li-ion) =====
-      const float VMAX  = 4.22;   // 100%: Fully charged
+      const float VMAX  = 4.24;   // 100%: Fully charged
       const float VHIGH = 3.95;   //  75%: Top drop-off
       const float VMID  = 3.75;   //  50%: Middle of the flat plateau
       const float VLOW  = 3.50;   //  15%: Bottom of plateau, about to drop fast
@@ -893,7 +893,6 @@ script:
   - id: sleep_decider
     then:
       - lambda: |-
-          ESP_LOGI("sleep", "Check sleep");
           if (std::isnan(id(sleep_enabled).state) || 
               std::isnan(id(sleep_start_hour).state) || 
               std::isnan(id(sleep_end_hour).state)) {
@@ -902,7 +901,6 @@ script:
           }
 
           if (!id(sleep_enabled).state) {
-            ESP_LOGI("sleep", "Sleep disabled → staying awake");
             return;
           }
 
