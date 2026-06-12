@@ -40,6 +40,9 @@ logger:
   level: ERROR
   baud_rate: 0
 
+# logger:
+#   level: DEBUG
+
 api:
 
 ota:
@@ -62,8 +65,8 @@ wifi:
 
 captive_portal:
 
-web_server:
-  port: 80
+# web_server:
+#   port: 80
 
 globals:
   - id: last_touch_ms
@@ -312,14 +315,39 @@ sensor:
     update_interval: 1min
     on_value:
       then:
+        # - lambda: |-
+        #       ESP_LOGI("battery", "Voltage=%.3fV", x);
         - component.update: batt_level
+    on_value_range:
+      - below: 3.19
+        then:
+          - deep_sleep.enter:
+              id: night_sleep
+              sleep_duration: 0s  # '0s' forces the ESP32 to sleep INDEFINITELY.
     filters:
-      - lambda: |-
-          return x * 1.995;
+      # - lambda: |-
+      #         ESP_LOGI("battery", "RAW ADC=%.3fV", x);
+      #         return x;
       - sliding_window_moving_average:
           window_size: 15
           send_every: 1
-
+      - calibrate_linear:
+          method: exact
+          datapoints:
+            - 1.585 -> 3.17 # Point 1: Empty
+            - 1.626 -> 3.22
+            - 1.700 -> 3.36
+            - 1.718 -> 3.40
+            - 1.786 -> 3.44
+            - 1.796 -> 3.50
+            - 1.812 -> 3.60
+            - 1.866 -> 3.70
+            - 1.903 -> 3.80
+            - 1.951 -> 3.90
+            - 2.017 -> 4.00
+            - 2.069 -> 4.10
+            - 2.076 -> 4.15
+            - 2.125 -> 4.24  # Point 5: Full
   - platform: template
     name: "Battery Level"
     id: batt_level
@@ -335,7 +363,7 @@ sensor:
       }
       
       // ===== CONFIG (Tuned for standard 3.7V Li-ion) =====
-      const float VMAX  = 4.20;   // 100%: Fully charged
+      const float VMAX  = 4.22;   // 100%: Fully charged
       const float VHIGH = 3.95;   //  75%: Top drop-off
       const float VMID  = 3.75;   //  50%: Middle of the flat plateau
       const float VLOW  = 3.50;   //  15%: Bottom of plateau, about to drop fast
