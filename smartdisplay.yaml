@@ -44,6 +44,8 @@ logger:
 #   level: DEBUG
 
 api:
+  encryption:
+    key: "uQ0fPZIzgmgMjoDOUVFR5cVwwuX2BMpkvkfAX0cdZCU="
 
 ota:
   - platform: esphome
@@ -84,6 +86,10 @@ globals:
   - id: ha_logo_visible
     type: bool
     initial_value: 'true'
+  - id: touch_start_y
+    type: int
+    restore_value: no
+    initial_value: '0'
 
 deep_sleep:
   id: night_sleep
@@ -764,7 +770,7 @@ script:
       - lvgl.label.update:
           id: label_date
           text: !lambda |-
-            char buff[12] = "-";
+            char buff[16] = "-";
             auto time = id(ha_time).now();
             if (time.is_valid()) {
               sprintf(buff, "%02d/%02d/%04d",
@@ -843,6 +849,16 @@ script:
                   return "mario:d=4,o=5,b=100:16e6,16e6,32p,8e6,16c6,8e6,8g6,8p,8g,8p,8c6,16p,8g,16p,8e,16p,8a,8b,16a#,8a,16g.,16e6,16g6,8a6,16f6,8g6,8e6,16c6,16d6,8b,16p,8c6,16p,8g,16p,8e,16p,8a,8b,16a#,8a,16g.,16e6,16g6,8a6,16f6,8g6,8e6,16c6,16d6,8b,8p,16g6,16f#6,16f6,16d#6,16p,16e6,16p,16g#,16a,16c6,16p,16a,16c6,16d6,8p,16g6,16f#6,16f6,16d#6,16p,16e6,16p,16c7,16p,16c7,16c7,p,16g6,16f#6,16f6,16d#6,16p,16e6,16p,16g#,16a,16c6,16p,16a,16c6,16d6,8p,16d#6,8p,16d6,8p,16c6";
                 
                 return "nokia_pop:d=8,o=5,b=370: c5, e5, g5, p, c5, e5, g5";
+
+  - id: dismiss_notification
+    mode: restart
+    then:
+      - logger.log: "Notification dismissed"
+      - rtttl.stop
+      - lvgl.obj.update:
+          id: notification_popup
+          hidden: true
+          clickable: false
 
   - id: center_screen_volume
     then:
@@ -1526,9 +1542,13 @@ lvgl:
               text_color: 0xFFFFFF
               long_mode: WRAP
         on_click:
-          - logger.log: "Notification dismissed"
-          - rtttl.stop
-          - lvgl.obj.update:
-              id: notification_popup
-              hidden: true
-              clickable: false
+          - script.execute: dismiss_notification
+        on_press:
+          - lambda: |-
+              id(touch_start_y) = point.y;
+        on_release:
+          - lambda: |-
+              // Swipe up: difference between starting Y and release Y exceeds threshold (e.g., 30 pixels)
+              if (id(touch_start_y) - point.y > 30) {
+                id(dismiss_notification).execute();
+              }
