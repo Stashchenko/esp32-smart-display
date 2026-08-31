@@ -374,28 +374,19 @@ sensor:
       const float VMID  = 3.75;   //  50%: Middle of the flat plateau
       const float VLOW  = 3.50;   //  15%: Bottom of plateau, about to drop fast
       const float VMIN  = 3.20;   //   0%: Electronics brown-out point
+      
+      float percent = 0.0;
 
       // ===== LOGIC =====
-      if (v >= VMAX) return 100.0;
-      if (v <= VMIN) return 0.0;
+      if (v >= VMAX) percent = 100.0;
+      else if (v <= VMIN) percent = 0.0;
+      else if (v >= VHIGH) percent = 75.0 + (v - VHIGH) * (25.0 / (VMAX - VHIGH));
+      else if (v >= VMID) percent = 50.0 + (v - VMID) * (25.0 / (VHIGH - VMID));
+      else if (v >= VLOW) percent = 15.0 + (v - VLOW) * (35.0 / (VMID - VLOW));
+      else percent = (v - VMIN) * (15.0 / (VLOW - VMIN));
 
-      // 100% to 75% (Top curve)
-      if (v >= VHIGH) {
-        return 75.0 + (v - VHIGH) * (25.0 / (VMAX - VHIGH));
-      }
-
-      // 75% to 50% (Upper flat plateau)
-      if (v >= VMID) {
-        return 50.0 + (v - VMID) * (25.0 / (VHIGH - VMID));
-      }
-      
-      // 50% to 15% (Lower flat plateau)
-      if (v >= VLOW) {
-        return 15.0 + (v - VLOW) * (35.0 / (VMID - VLOW));
-      }
-
-      // 15% to 0% (Fast drop at the end)
-      return (v - VMIN) * (15.0 / (VLOW - VMIN));
+      // Round to 1 decimal place before passing to Home Assistant
+      return roundf(percent * 10.0) / 10.0;
     on_value:
       then:
         - lvgl.arc.update:
@@ -412,7 +403,7 @@ sensor:
             text: !lambda |-
               char buff[8];
               sprintf(buff, "%.0f", x);
-              return std::string(buff);  
+              return std::string(buff);
 
   - platform: homeassistant
     id: media_volume
@@ -605,8 +596,8 @@ select:
     internal: true
     on_value:
       then:
-        - homeassistant.service:
-            service: climate.set_hvac_mode
+        - homeassistant.action:
+            action: climate.set_hvac_mode
             data:
               entity_id: $CLIMATE
               hvac_mode: !lambda |-
@@ -1128,8 +1119,8 @@ lvgl:
                     text_color: 0x101010
                     text_font: material_small
               on_click:
-                - homeassistant.service:
-                    service: climate.set_temperature
+                - homeassistant.action:
+                    action: climate.set_temperature
                     data:
                       entity_id: $CLIMATE
                       temperature: !lambda "return to_string(id(ac_target_temp).state - 1.0);"
@@ -1174,8 +1165,8 @@ lvgl:
                     text_color: 0x101010
                     text_font: material_small
               on_click:
-                - homeassistant.service:
-                    service: climate.set_temperature
+                - homeassistant.action:
+                    action: climate.set_temperature
                     data:
                       entity_id: $CLIMATE
                       temperature: !lambda "return to_string(id(ac_target_temp).state + 1.0);"
@@ -1373,8 +1364,8 @@ lvgl:
                     text_font: material
                     text_color: 0xFFFFFF
               on_click:
-                - homeassistant.service:
-                    service: media_player.media_play_pause
+                - homeassistant.action:
+                    action: media_player.media_play_pause
                     data:
                       entity_id: $MEDIA_PLAYER
           # Previous
@@ -1393,8 +1384,8 @@ lvgl:
                     text_color: 0x101010
                     text_font: material
               on_click:
-                - homeassistant.service:
-                    service: media_player.media_previous_track
+                - homeassistant.action:
+                    action: media_player.media_previous_track
                     data:
                       entity_id: $MEDIA_PLAYER
           # Next
@@ -1413,8 +1404,8 @@ lvgl:
                     text_font: material
                     text_color: 0x101010
               on_click:
-                - homeassistant.service:
-                    service: media_player.media_next_track
+                - homeassistant.action:
+                    action: media_player.media_next_track
                     data:
                       entity_id: $MEDIA_PLAYER
           # Volume Up button
@@ -1433,8 +1424,8 @@ lvgl:
                     text_font: material
                     text_color: 0x101010
               on_click:
-                - homeassistant.service:
-                    service: media_player.volume_up
+                - homeassistant.action:
+                    action: media_player.volume_up
                     data:
                       entity_id: $MEDIA_PLAYER
           # Volume Down button
@@ -1452,8 +1443,8 @@ lvgl:
                     text_font: material
                     text_color: 0x101010
               on_click:
-                - homeassistant.service:
-                    service: media_player.volume_down
+                - homeassistant.action:
+                    action: media_player.volume_down
                     data:
                       entity_id: $MEDIA_PLAYER
 
