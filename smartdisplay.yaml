@@ -7,7 +7,8 @@ substitutions:
   MEDIA_PLAYER: "media_player.kitchen"
   WEATHER: "weather.forecast_home"
   AIR_QUALITY: "sensor.air_quality_index_krakow_air_quality_index"
-  CLIMATE: "climate.ac_irblaster_samsung_aqv"
+  CLIMATE: "climate.samsung_ac"
+  TEMPERATURE_SENSOR: "sensor.zhimi_rmb1_e7db_temperature"
 
 esphome:
   name: smart-display
@@ -484,8 +485,7 @@ sensor:
   # --- AC Tracked Sensors ---
   - platform: homeassistant
     id: ac_current_temp
-    entity_id: $CLIMATE
-    attribute: current_temperature
+    entity_id: $TEMPERATURE_SENSOR
     on_value:
       - lvgl.label.update:
           id: temperature_home_label
@@ -796,7 +796,6 @@ script:
       #  disable lvgl rendering
       - lvgl.pause:
       - component.update: my_display
-
   - id: screen_on
     then:
       - lambda: |-
@@ -814,7 +813,6 @@ script:
       - lvgl.obj.update:
           id: notification_popup
           clickable: true    # when screen on
-
   - id: notification_sound
     then:
       - if:
@@ -850,7 +848,6 @@ script:
           id: notification_popup
           hidden: true
           clickable: false
-
   - id: center_screen_volume
     then:
       - lvgl.obj.update:
@@ -869,7 +866,6 @@ script:
             sprintf(buff, "%d%%", vol_percent);
             return std::string(buff);
       - script.execute: hide_center_label
-
   - id: center_screen_ac_temp
     then:
       - lvgl.obj.update:
@@ -889,7 +885,6 @@ script:
             sprintf(buff, "%.0f°", temp);
             return std::string(buff);
       - script.execute: hide_center_label
-
   - id: hide_center_label
     mode: restart
     then:
@@ -963,6 +958,30 @@ script:
             // Return duration in milliseconds
             return diff_secs * 1000;
 
+  - id: volume_up_hold
+    mode: restart
+    then:
+      - while:
+          condition:
+            lambda: 'return true;'
+          then:
+            - homeassistant.action:
+                action: media_player.volume_up
+                data:
+                  entity_id: $MEDIA_PLAYER
+            - delay: 300ms # Adjust this value (e.g., 200ms or 400ms) to change how fast the volume increments
+  - id: volume_down_hold
+    mode: restart
+    then:
+      - while:
+          condition:
+            lambda: 'return true;'
+          then:
+            - homeassistant.action:
+                action: media_player.volume_down
+                data:
+                  entity_id: $MEDIA_PLAYER
+            - delay: 300ms
 output:
   - platform: gpio
     pin: GPIO4
@@ -1423,11 +1442,10 @@ lvgl:
                     text: "\U000F075D"  # volume up
                     text_font: material
                     text_color: 0x101010
-              on_click:
-                - homeassistant.action:
-                    action: media_player.volume_up
-                    data:
-                      entity_id: $MEDIA_PLAYER
+              on_press:
+                - script.execute: volume_up_hold
+              on_release:
+                - script.stop: volume_up_hold
           # Volume Down button
           - button:
               width: 50
@@ -1442,11 +1460,10 @@ lvgl:
                     text: "\U000F075E"  # volume down
                     text_font: material
                     text_color: 0x101010
-              on_click:
-                - homeassistant.action:
-                    action: media_player.volume_down
-                    data:
-                      entity_id: $MEDIA_PLAYER
+              on_press:
+                - script.execute: volume_down_hold
+              on_release:
+                - script.stop: volume_down_hold
 
     - obj:
         id: center_screen_obj
