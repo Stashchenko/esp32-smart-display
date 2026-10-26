@@ -52,8 +52,8 @@ ota:
   - platform: esphome
 
 wifi:
-  ssid: !secret wifi_ssid
-  password: !secret wifi_password
+  ssid: !secret ha_wifi
+  password: !secret ha_wifi_pass
   power_save_mode: light
 
   ap:
@@ -509,15 +509,17 @@ sensor:
 
 text_sensor:
   - platform: homeassistant
+    id: media_artist
+    entity_id: $MEDIA_PLAYER
+    attribute: media_artist
+    on_value:
+      - script.execute: update_media_display
+  - platform: homeassistant
     id: media_title
     entity_id: $MEDIA_PLAYER
     attribute: media_title
     on_value:
-      - lvgl.label.update:
-          id: media_label
-          text: !lambda |-
-            if (x.length() > 0) return x.c_str();
-            return "No media";
+      - script.execute: update_media_display
 
   - platform: homeassistant
     id: media_state
@@ -982,6 +984,26 @@ script:
                 data:
                   entity_id: $MEDIA_PLAYER
             - delay: 300ms
+
+  - id: update_media_display
+    mode: restart
+    then:
+      - delay: 100ms  # Acts as a debounce to wait for both attributes to arrive
+      - lvgl.label.update:
+          id: media_label
+          text: !lambda |-
+            std::string title = id(media_title).state;
+            std::string artist = id(media_artist).state;
+            
+            if (title == "unavailable" || title == "unknown" || title.empty()) {
+              return std::string("No media");
+            }
+            
+            if (artist == "unavailable" || artist == "unknown" || artist.empty()) {
+              return title;
+            }
+            
+            return title + " - " + artist;
 output:
   - platform: gpio
     pin: GPIO4
